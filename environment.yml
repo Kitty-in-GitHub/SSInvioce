@@ -1,0 +1,6 @@
+# Star Invoice Helper — frontend Node toolchain
+name: star-invoice
+channels:
+  - conda-forge
+dependencies:
+  - nodejs=22
