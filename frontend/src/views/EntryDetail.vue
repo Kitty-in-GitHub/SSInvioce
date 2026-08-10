@@ -23,23 +23,41 @@
     <div v-if="loading" class="meta">加载中…</div>
 
     <template v-else-if="entry">
-      <div class="card" style="margin-bottom: 1rem">
-        <div class="form-row">
-          <input v-model="editTitle" style="flex:1" />
-          <input v-model="editNote" placeholder="备注" style="flex:1" />
-          <select v-model="editGroupId">
-            <option :value="null">未分组</option>
-            <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
-          </select>
-          <button class="btn" @click="saveMeta">保存信息</button>
+      <div class="card spaced">
+        <div class="meta-grid">
+          <div class="field field-span-2">
+            <label>标题</label>
+            <input v-model="editTitle" />
+          </div>
+          <div class="field">
+            <label>所属分组</label>
+            <select v-model="editGroupId">
+              <option :value="null">未分组</option>
+              <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+            </select>
+          </div>
+          <div class="field field-span-2">
+            <label>备注</label>
+            <input v-model="editNote" placeholder="可选" />
+          </div>
+          <div class="field">
+            <label>报销金额</label>
+            <div class="amount-field-row">
+              <div class="amount-edit">
+                <span class="amount-prefix" aria-hidden="true">¥</span>
+                <input v-model="editAmount" type="number" step="0.01" min="0" placeholder="0.00" />
+              </div>
+              <span class="amount-tag" :class="entry.amount_source">
+                {{ entry.amount_source === 'manual' ? '已手改' : entry.amount_source === 'auto' ? '自动' : '无金额' }}
+              </span>
+            </div>
+          </div>
         </div>
-        <div class="form-row" style="margin-bottom:0;align-items:center">
-          <label class="meta">报销金额</label>
-          <input v-model="editAmount" type="number" step="0.01" min="0" placeholder="元" style="width:140px" />
-          <span class="amount-tag" :class="entry.amount_source">
-            {{ entry.amount_source === 'manual' ? '已手改' : entry.amount_source === 'auto' ? '自动' : '无金额' }}
-          </span>
-          <button class="btn" :disabled="reparsing" @click="reparse">{{ reparsing ? '识别中…' : '重新识别' }}</button>
+        <div class="meta-actions">
+          <button class="btn btn-primary btn-sm" @click="saveMeta">保存信息</button>
+          <button class="btn btn-sm" :disabled="reparsing" @click="reparse">
+            {{ reparsing ? '识别中…' : '重新识别金额' }}
+          </button>
         </div>
       </div>
 
@@ -55,11 +73,11 @@
           </div>
           <div class="meta" v-if="slot.material">{{ slot.material.original_name }}</div>
           <div class="actions">
-            <label class="btn">
+            <label class="btn btn-sm">
               {{ slot.material ? '替换' : '上传' }}
               <input type="file" hidden :accept="slot.accept" @change="onUpload($event, slot.type)" />
             </label>
-            <button v-if="slot.material" class="btn btn-danger" @click="removeMaterial(slot.material)">删除</button>
+            <button v-if="slot.material" class="btn btn-danger btn-sm" @click="removeMaterial(slot.material)">删除</button>
           </div>
         </div>
       </div>
