@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from ..db import get_conn, now_iso
 from ..logging_config import get_logger
 from ..models import ClassifyConfirmRequest, MaterialType
+from ..services.amount import apply_auto_amount
 from ..services.classify import classify_file
 from ..services.storage import move_inbox_to_entry, probe_image_size, store_upload
 
@@ -107,7 +108,10 @@ def classify_confirm(body: ClassifyConfirmRequest):
             if item.create_entry_title:
                 ts = now_iso()
                 cur = conn.execute(
-                    "INSERT INTO entries (title, note, created_at, updated_at) VALUES (?, '', ?, ?)",
+                    """
+                    INSERT INTO entries (title, note, created_at, updated_at, amount_source)
+                    VALUES (?, '', ?, ?, 'empty')
+                    """,
                     (item.create_entry_title.strip(), ts, ts),
                 )
                 entry_id = int(cur.lastrowid)
@@ -137,6 +141,13 @@ def classify_confirm(body: ClassifyConfirmRequest):
             material_ids.append(int(cur.lastrowid))
             if entry_id is not None:
                 conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, entry_id))
+                if item.type == "invoice":
+                    apply_auto_amount(
+                        conn,
+                        entry_id,
+                        stored_path=stored_path,
+                        original_name=staged["original_name"],
+                    )
 
     log.info(
         "classify confirm materials=%s created_entries=%s",

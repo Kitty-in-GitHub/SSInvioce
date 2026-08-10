@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from ..db import get_conn, now_iso
 from ..logging_config import get_logger
 from ..models import MaterialAssign, MaterialOut, MaterialType, MaterialTypeUpdate
+from ..services.amount import apply_auto_amount
 from ..services.classify import classify_file
 from ..services.serializers import material_to_out
 from ..services.storage import delete_file, move_inbox_to_entry, probe_image_size, resolve_stored, store_upload
@@ -77,6 +78,13 @@ async def upload_material(
         mid = int(cur.lastrowid)
         if entry_id is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, entry_id))
+            if mat_type == "invoice":
+                apply_auto_amount(
+                    conn,
+                    entry_id,
+                    stored_path=rel,
+                    original_name=file.filename,
+                )
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (mid,)).fetchone()
         log.info(
             "uploaded material id=%s type=%s entry_id=%s name=%r bytes=%s",
@@ -115,9 +123,15 @@ def update_material(material_id: int, body: MaterialAssign):
         )
         if new_entry is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (now_iso(), new_entry))
+            if new_type == "invoice":
+                apply_auto_amount(
+                    conn,
+                    new_entry,
+                    stored_path=new_path,
+                    original_name=data["original_name"],
+                )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         return material_to_out(dict(updated))
-
 
 @router.patch("/{material_id}/type", response_model=MaterialOut)
 def update_material_type(material_id: int, body: MaterialTypeUpdate):
@@ -131,6 +145,13 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
                 "UPDATE entries SET updated_at = ? WHERE id = ?",
                 (now_iso(), row["entry_id"]),
             )
+            if body.type == "invoice":
+                apply_auto_amount(
+                    conn,
+                    row["entry_id"],
+                    stored_path=row["stored_path"],
+                    original_name=row["original_name"],
+                )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         return material_to_out(dict(updated))
 

@@ -3,7 +3,10 @@ async function formatDetail(detail) {
   if (typeof detail === 'string') return detail
   if (detail.message) {
     const missing = detail.missing?.length ? `（缺：${detail.missing.join(', ')}）` : ''
-    return `${detail.message}${missing}`
+    const incomplete = detail.incomplete?.length
+      ? `；不齐套：${detail.incomplete.map((x) => x.title || x.entry_id).join('、')}`
+      : ''
+    return `${detail.message}${missing}${incomplete}`
   }
   try {
     return JSON.stringify(detail)
@@ -115,6 +118,73 @@ export const api = {
     const filename = decodeURIComponent(match?.[1] || match?.[2] || `entry_${id}.pdf`)
     return { blob, filename }
   },
+  composeBatch: async (entryIds) => {
+    let res
+    try {
+      res = await fetch('/api/entries/compose-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry_ids: entryIds }),
+      })
+    } catch (e) {
+      throw new Error(`无法连接后端进行批量拼版：${e.message}`)
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const detail = data.detail ?? res.statusText
+      throw new Error(await formatDetail(detail) || res.statusText)
+    }
+    const blob = await res.blob()
+    const disposition = res.headers.get('content-disposition') || ''
+    const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition)
+    const filename = decodeURIComponent(match?.[1] || match?.[2] || `batch_${entryIds.length}.pdf`)
+    return { blob, filename }
+  },
+  listGroups: () => request('/api/groups'),
+  createGroup: (body) =>
+    request('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  updateGroup: (id, body) =>
+    request(`/api/groups/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteGroup: (id) => request(`/api/groups/${id}`, { method: 'DELETE' }),
+  reparseAmount: (id, force = false) =>
+    request(`/api/entries/${id}/reparse-amount`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    }),
+  composeGroup: async (groupId) => {
+    let res
+    try {
+      res = await fetch(`/api/groups/${groupId}/compose`, { method: 'POST' })
+    } catch (e) {
+      throw new Error(`无法连接后端进行组拼版：${e.message}`)
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const detail = data.detail ?? res.statusText
+      throw new Error(await formatDetail(detail) || res.statusText)
+    }
+    const blob = await res.blob()
+    const disposition = res.headers.get('content-disposition') || ''
+    const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition)
+    const filename = decodeURIComponent(match?.[1] || match?.[2] || `group_${groupId}.pdf`)
+    return { blob, filename }
+  },
+}
+
+export function formatAmount(val) {
+  if (val == null || val === '') return '—'
+  const n = Number(val)
+  if (Number.isNaN(n)) return '—'
+  return `¥${n.toFixed(2)}`
 }
 
 export const TYPE_LABELS = {

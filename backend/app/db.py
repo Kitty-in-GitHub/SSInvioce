@@ -12,11 +12,31 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r["name"] if isinstance(r, sqlite3.Row) else r[1] for r in rows}
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
+    cols = _table_columns(conn, table)
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
 def init_db() -> None:
     ensure_dirs()
     with get_conn() as conn:
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                note TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -40,7 +60,15 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_materials_entry_id ON materials(entry_id);
             CREATE INDEX IF NOT EXISTS idx_materials_type ON materials(type);
+            CREATE INDEX IF NOT EXISTS idx_groups_sort ON groups(sort_order, id);
             """
+        )
+        _ensure_column(conn, "entries", "group_id", "INTEGER")
+        _ensure_column(conn, "entries", "amount", "REAL")
+        _ensure_column(conn, "entries", "amount_source", "TEXT NOT NULL DEFAULT 'empty'")
+        _ensure_column(conn, "entries", "amount_auto", "REAL")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entries_group_id ON entries(group_id)"
         )
 
 

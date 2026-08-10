@@ -23,6 +23,8 @@ Start-Process -FilePath $venvPy -ArgumentList @(
   "-m", "uvicorn", "backend.app.main:app",
   "--host", "127.0.0.1",
   "--port", "$apiPort",
+  "--reload",
+  "--reload-dir", "backend",
   "--log-level", "info"
 )
 

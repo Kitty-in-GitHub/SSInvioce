@@ -21,7 +21,7 @@ if not exist "%~dp0frontend\node_modules\" (
 )
 
 echo Starting API on http://127.0.0.1:%API_PORT%
-start "StarInvoice-API" "%VENV_PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %API_PORT% --log-level info
+start "StarInvoice-API" "%VENV_PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %API_PORT% --reload --reload-dir backend --log-level info
 
 echo Waiting for API health...
 powershell -NoProfile -Command "for($i=0;$i -lt 30;$i++){ try { $r=Invoke-RestMethod http://127.0.0.1:%API_PORT%/api/health; if($r.service -eq 'star-invoice-helper'){ Write-Host 'API OK'; exit 0 } } catch {} Start-Sleep -Milliseconds 400 }; Write-Host 'API health check failed'; exit 1"

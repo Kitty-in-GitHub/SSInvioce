@@ -27,7 +27,19 @@
         <div class="form-row">
           <input v-model="editTitle" style="flex:1" />
           <input v-model="editNote" placeholder="备注" style="flex:1" />
+          <select v-model="editGroupId">
+            <option :value="null">未分组</option>
+            <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
           <button class="btn" @click="saveMeta">保存信息</button>
+        </div>
+        <div class="form-row" style="margin-bottom:0;align-items:center">
+          <label class="meta">报销金额</label>
+          <input v-model="editAmount" type="number" step="0.01" min="0" placeholder="元" style="width:140px" />
+          <span class="amount-tag" :class="entry.amount_source">
+            {{ entry.amount_source === 'manual' ? '已手改' : entry.amount_source === 'auto' ? '自动' : '无金额' }}
+          </span>
+          <button class="btn" :disabled="reparsing" @click="reparse">{{ reparsing ? '识别中…' : '重新识别' }}</button>
         </div>
       </div>
 
@@ -65,12 +77,16 @@ const props = defineProps({ id: { type: [String, Number], required: true } })
 const route = useRoute()
 const { askConfirm } = useConfirmDialog()
 const entry = ref(null)
+const groups = ref([])
 const loading = ref(true)
 const error = ref('')
 const msg = ref('')
 const composing = ref(false)
+const reparsing = ref(false)
 const editTitle = ref('')
 const editNote = ref('')
+const editAmount = ref('')
+const editGroupId = ref(null)
 
 const slots = computed(() => {
   const mats = entry.value?.materials || []
@@ -90,9 +106,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    entry.value = await api.getEntry(props.id)
+    ;[entry.value, groups.value] = await Promise.all([api.getEntry(props.id), api.listGroups()])
     editTitle.value = entry.value.title
     editNote.value = entry.value.note || ''
+    editAmount.value = entry.value.amount ?? ''
+    editGroupId.value = entry.value.group_id
   } catch (e) {
     error.value = e.message
   } finally {
@@ -104,10 +122,41 @@ async function saveMeta() {
   error.value = ''
   msg.value = ''
   try {
-    entry.value = await api.updateEntry(props.id, { title: editTitle.value, note: editNote.value })
+    const amountRaw = editAmount.value
+    const amount = amountRaw === '' || amountRaw == null ? null : Number(amountRaw)
+    if (amountRaw !== '' && amountRaw != null && Number.isNaN(amount)) {
+      error.value = '金额格式无效'
+      return
+    }
+    const body = {
+      title: editTitle.value,
+      note: editNote.value,
+      amount,
+    }
+    if (editGroupId.value == null) body.clear_group = true
+    else body.group_id = editGroupId.value
+    entry.value = await api.updateEntry(props.id, body)
+    editAmount.value = entry.value.amount ?? ''
+    editGroupId.value = entry.value.group_id
     msg.value = '已保存'
   } catch (e) {
     error.value = e.message
+  }
+}
+
+async function reparse() {
+  reparsing.value = true
+  error.value = ''
+  msg.value = ''
+  try {
+    const force = entry.value?.amount_source === 'manual'
+    entry.value = await api.reparseAmount(props.id, force)
+    editAmount.value = entry.value.amount ?? ''
+    msg.value = force ? '已强制重新识别并覆盖手改金额' : '已重新识别金额'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    reparsing.value = false
   }
 }
 

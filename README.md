@@ -45,7 +45,7 @@ start-dev.bat
 
 1. 如无则创建 `.venv` 并 `pip install -r requirements.txt`
 2. 用 `D:\Miniconda\envs\star-invoice\npm.cmd` 安装前端依赖
-3. 启动 API：`http://127.0.0.1:8765`（**不用 8000**，避免和本机其他服务冲突）
+3. 启动 API：`http://127.0.0.1:8765`（**不用 8000**，避免和本机其他服务冲突；开发模式带 `--reload`，改 `backend/` 会自动热重启）
 4. 健康检查确认 `service=star-invoice-helper`
 5. 启动 Vite：`http://127.0.0.1:5173`（代理 `/api` → `8765`）
 
@@ -54,10 +54,10 @@ start-dev.bat
 手动分步：
 
 ```bat
-:: 后端
+:: 后端（开发热重启）
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8765
+.venv\Scripts\python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8765 --reload --reload-dir backend
 
 :: 前端（另开终端，使用 conda 环境里的 npm）
 cd frontend
