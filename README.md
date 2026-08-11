@@ -90,12 +90,23 @@ environment.yml       conda 前端工具链
 requirements.txt      Python 依赖
 ```
 
-## 后续绿色软件（未实现打包）
+## 绿色便携包（Windows）
 
-架构已前后端分离。后续可将 Vue `dist` + FastAPI 打成便携包，例如：
+在本机双击或运行：
 
-1. `pywebview` + PyInstaller / Nuitka（推荐轻量）
-2. Tauri / Electron 壳
-3. 内嵌 Python 运行时的文件夹 + `start.bat`
+```bat
+build-green.bat
+```
 
-数据目录保持相对可执行文件旁路的 `data/` 即可。
+或：
+
+```powershell
+.\scripts\build-green.ps1
+```
+
+脚本会：构建前端、下载 embeddable Python、安装依赖、拷贝 `vendor/ocr`，输出到：
+
+- `release/StarInvoiceHelper/`（解压即用，双击 `启动.bat` / `Start.bat`）
+- `release/StarInvoiceHelper-green-*.zip`
+
+目标机无需安装 Python / Node。数据写在包内 `data/`。

@@ -4,8 +4,8 @@
       <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="batch-upload-title">
         <div class="modal-head">
           <div>
-            <h3 id="batch-upload-title" class="modal-title">批量上传与归类</h3>
-            <p class="modal-sub">上传后按规则建议类型，确认后入库；未知类型需手选</p>
+            <h3 id="batch-upload-title" class="modal-title">批量上传</h3>
+            <p class="modal-sub">OCR / 发票文本自动识别类型与金额，按线索归入拟建条目，确认后入库</p>
           </div>
           <button class="btn-ghost" type="button" aria-label="关闭" @click="close">关闭</button>
         </div>

@@ -22,3 +22,6 @@ Thumbs.db
 *.log
 .npm/
 SKILL (1).md
+
+# Green portable pack output (rebuild via build-green.bat)
+release/

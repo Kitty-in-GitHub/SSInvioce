@@ -148,9 +148,10 @@ def extract_features(
 ) -> FileFeatures:
     path = abs_path or resolve_stored(stored_path)
     text, source, ocr_used = extract_text_for_file(abs_path=path, original_name=original_name)
-    amount = _amount_float(parse_amount_from_pdf_text(text)) if text else None
-    if amount is None:
-        amount = _amount_float(parse_amount_from_filename(original_name))
+    from_text = _amount_float(parse_amount_from_pdf_text(text)) if text else None
+    from_name = _amount_float(parse_amount_from_filename(original_name))
+    # Prefer explicit filename money token when present (e.g. 260509_12.00_xxx.pdf)
+    amount = from_name if from_name is not None else from_text
 
     suggested = _pick_type_from_text(text, original_name, width, height)
     feat = FileFeatures(

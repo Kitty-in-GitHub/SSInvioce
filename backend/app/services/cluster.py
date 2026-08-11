@@ -58,6 +58,15 @@ def _title_for(feats: list[FileFeatures], amount: float | None) -> str:
     return "未命名报销"
 
 
+def _feat_map(features: list[FileFeatures]) -> dict[str, FileFeatures]:
+    return {f.temp_id: f for f in features}
+
+
+def _refresh_title(c: ProposedCluster, by_id: dict[str, FileFeatures]) -> None:
+    feats = [by_id[t] for t in c.temp_ids if t in by_id]
+    c.title = _title_for(feats, c.amount)
+
+
 def _split_by_signals(group: list[FileFeatures]) -> list[list[FileFeatures]]:
     """Split same-amount files when merchant/date/order_no disagree."""
     if len(group) <= 3:
@@ -75,7 +84,6 @@ def _split_by_signals(group: list[FileFeatures]) -> list[list[FileFeatures]]:
             key = f"_loose_{id(f)}"
         buckets[key].append(f)
 
-    # Merge tiny loose singles back if only one real bucket
     real = [v for k, v in buckets.items() if not k.startswith("_loose_")]
     loose = [v for k, v in buckets.items() if k.startswith("_loose_")]
     if not real:
@@ -129,11 +137,64 @@ def _pack_trio(group: list[FileFeatures], cluster_idx: int) -> tuple[list[Propos
     return clusters, leftovers
 
 
+def _try_attach(f: FileFeatures, clusters: list[ProposedCluster], by_id: dict[str, FileFeatures]) -> bool:
+    """Attach a typed file into an incomplete cluster when signals agree."""
+    if f.suggested_type not in NEEDED:
+        return False
+    candidates = [c for c in clusters if f.suggested_type in c.missing]
+    if not candidates:
+        return False
+
+    key = _amount_key(f.amount)
+    scored: list[tuple[int, ProposedCluster]] = []
+    for c in candidates:
+        score = 0
+        if key is not None and _amount_key(c.amount) == key:
+            score += 5
+        if key is not None and c.amount is None:
+            score += 1
+        if f.merchant and c.merchant and f.merchant[:12] == c.merchant[:12]:
+            score += 4
+        if f.order_no:
+            for tid in c.temp_ids:
+                other = by_id.get(tid)
+                if other and other.order_no and other.order_no == f.order_no:
+                    score += 6
+                    break
+        if f.date:
+            for tid in c.temp_ids:
+                other = by_id.get(tid)
+                if other and other.date and other.date == f.date:
+                    score += 2
+                    break
+        # Single incomplete cluster missing this slot — weak fallback
+        if len(candidates) == 1 and score == 0:
+            score = 1
+        if score > 0:
+            scored.append((score, c))
+
+    if not scored:
+        return False
+    scored.sort(key=lambda x: -x[0])
+    c = scored[0][1]
+    c.temp_ids.append(f.temp_id)
+    c.types[f.temp_id] = f.suggested_type
+    c.missing = [m for m in c.missing if m != f.suggested_type]
+    c.complete = not c.missing
+    if c.amount is None and f.amount is not None:
+        c.amount = f.amount
+    if not c.merchant and f.merchant:
+        c.merchant = f.merchant
+    _refresh_title(c, by_id)
+    return True
+
+
 def cluster_features(features: list[FileFeatures]) -> tuple[list[ProposedCluster], list[str]]:
     """
     Cluster files into proposed reimbursement entries.
     Returns (clusters, unmatched_temp_ids).
     """
+    by_id = _feat_map(features)
     with_amount: dict[str, list[FileFeatures]] = defaultdict(list)
     no_amount: list[FileFeatures] = []
     for f in features:
@@ -144,7 +205,7 @@ def cluster_features(features: list[FileFeatures]) -> tuple[list[ProposedCluster
             with_amount[key].append(f)
 
     clusters: list[ProposedCluster] = []
-    unmatched: list[FileFeatures] = list(no_amount)
+    unmatched: list[FileFeatures] = []
     idx = 1
     for _key, group in sorted(with_amount.items(), key=lambda kv: kv[0]):
         for subgroup in _split_by_signals(group):
@@ -153,29 +214,20 @@ def cluster_features(features: list[FileFeatures]) -> tuple[list[ProposedCluster
             clusters.extend(built)
             unmatched.extend(left)
 
-    # Try attach unmatched unknowns into incomplete clusters of same amount
+    unmatched.extend(no_amount)
+
+    # Attach leftovers into incomplete clusters (amount / merchant / order_no)
     still: list[FileFeatures] = []
     for f in unmatched:
-        placed = False
-        if f.amount is not None and f.suggested_type in NEEDED:
-            key = _amount_key(f.amount)
-            for c in clusters:
-                if _amount_key(c.amount) != key:
-                    continue
-                if f.suggested_type in c.missing:
-                    c.temp_ids.append(f.temp_id)
-                    c.types[f.temp_id] = f.suggested_type
-                    c.missing = [m for m in c.missing if m != f.suggested_type]
-                    c.complete = not c.missing
-                    if not c.merchant and f.merchant:
-                        c.merchant = f.merchant
-                        c.title = _title_for(
-                            [x for x in features if x.temp_id in c.temp_ids],
-                            c.amount,
-                        )
-                    placed = True
-                    break
-        if not placed:
-            still.append(f)
+        if _try_attach(f, clusters, by_id):
+            continue
+        still.append(f)
+
+    # Pack remaining typed files even without amount (so OCR-miss dumps still get 拟建条目)
+    if still:
+        built, left = _pack_trio(still, idx)
+        idx += len(built)
+        clusters.extend(built)
+        still = left
 
     return clusters, [f.temp_id for f in still]

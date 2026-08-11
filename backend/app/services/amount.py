@@ -84,7 +84,8 @@ def extract_invoice_amount(*, stored_path: str, original_name: str = "") -> Deci
         log.exception("failed reading invoice text path=%s", stored_path)
 
     from_pdf = parse_amount_from_pdf_text(text)
-    chosen = from_pdf or from_name
+    # Prefer explicit filename money token when present
+    chosen = from_name or from_pdf
     log.info(
         "extract amount name=%r pdf=%s filename=%s -> %s",
         name,

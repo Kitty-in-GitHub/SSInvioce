@@ -61,7 +61,7 @@ const route = useRoute()
 const apiError = ref('')
 const apiInfo = ref(null)
 
-/** 侧栏导航：后续在此追加更多 tab */
+/** 侧栏导航（批量上传用弹窗，不进侧栏） */
 const navItems = [
   { to: '/', label: '条目', icon: '☰', match: ['/', '/entries'] },
   { to: '/inbox', label: '收件箱', icon: '▢' },
