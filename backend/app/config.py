@@ -10,6 +10,7 @@ EXPORTS_DIR = DATA_DIR / "exports"
 INBOX_DIR = UPLOADS_DIR / "inbox"
 DB_PATH = DATA_DIR / "app.db"
 FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
+VENDOR_OCR_DIR = ROOT_DIR / "vendor" / "ocr"
 
 # Dedicated port — avoid colliding with unrelated services on :8000
 API_HOST = "127.0.0.1"

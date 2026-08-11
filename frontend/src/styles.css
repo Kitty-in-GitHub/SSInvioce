@@ -362,6 +362,61 @@ button, input, select, textarea { font: inherit; }
 .batch-upload-actions {
   margin-top: 1rem;
 }
+.dropzone-hint {
+  margin: 0.5rem 0 0;
+}
+.cluster-list,
+.unmatched-block {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+.cluster-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.cluster-card {
+  padding: 0.75rem 0.9rem;
+}
+.cluster-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.65rem;
+}
+.cluster-title-input {
+  flex: 1 1 180px;
+  min-width: 140px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  font-weight: 600;
+  background: white;
+}
+.cluster-slots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+.cluster-slot {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 0.5rem;
+  min-height: 4.5rem;
+  background: #f7f8fb;
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+}
+.cluster-file {
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+@media (max-width: 800px) {
+  .cluster-slots { grid-template-columns: 1fr; }
+}
+
 
 .card {
   background: var(--card);

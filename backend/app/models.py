@@ -75,8 +75,20 @@ class ClassifyConfirmItem(BaseModel):
     create_entry_title: Optional[str] = None
 
 
+class ClassifyClusterMaterial(BaseModel):
+    temp_id: str
+    type: MaterialType
+
+
+class ClassifyClusterConfirm(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    amount: Optional[float] = None
+    materials: list[ClassifyClusterMaterial] = Field(min_length=1)
+
+
 class ClassifyConfirmRequest(BaseModel):
-    items: list[ClassifyConfirmItem]
+    items: list[ClassifyConfirmItem] = []
+    clusters: list[ClassifyClusterConfirm] = []
 
 
 class ComposeBatchRequest(BaseModel):

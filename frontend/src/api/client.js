@@ -94,11 +94,17 @@ export const api = {
     for (const f of files) fd.append('files', f)
     return request('/api/classify/preview', { method: 'POST', body: fd })
   },
-  classifyConfirm: (items) =>
+  classifyRecluster: (tempIds) =>
+    request('/api/classify/recluster', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ temp_ids: tempIds || null }),
+    }),
+  classifyConfirm: (payload) =>
     request('/api/classify/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
+      body: JSON.stringify(Array.isArray(payload) ? { items: payload, clusters: [] } : payload),
     }),
   composeEntry: async (id) => {
     let res

@@ -21,6 +21,7 @@ YUAN_RE = re.compile(
     re.UNICODE,
 )
 CURRENCY_RE = re.compile(r"[￥¥]\s*(\d+(?:\.\d{1,2})?)")
+YUAN_UNIT_RE = re.compile(r"(\d+(?:\.\d{1,2})?)\s*元")
 
 
 def _to_decimal(raw: str) -> Decimal | None:
@@ -55,7 +56,7 @@ def parse_amount_from_pdf_text(text: str) -> Decimal | None:
     if not text:
         return None
     compact = re.sub(r"\s+", "", text)
-    for pattern in (YUAN_RE, CURRENCY_RE):
+    for pattern in (YUAN_RE, CURRENCY_RE, YUAN_UNIT_RE):
         matches = pattern.findall(compact)
         if matches:
             # Prefer last match (合计 often appears near end)
