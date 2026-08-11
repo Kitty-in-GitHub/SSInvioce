@@ -6,202 +6,216 @@
         <p>分组管理 · 金额统计 · 齐套拼版</p>
       </div>
       <div class="actions">
-        <router-link class="btn" to="/upload">批量上传</router-link>
+        <button class="btn" type="button" @click="openUpload">批量上传</button>
       </div>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="hint" class="okmsg">{{ hint }}</p>
 
-    <div v-if="entries.length" class="card batch-bar">
-      <label class="check-line">
-        <input type="checkbox" :checked="allSelectableChecked" @change="toggleSelectAll" />
-        全选齐套条目
-      </label>
-      <span class="meta">已选 {{ selectedIds.length }} 项</span>
-      <button class="btn btn-primary btn-sm" :disabled="!selectedIds.length || batchComposing" @click="composeSelected">
-        {{ batchComposing ? '合并拼版中…' : `合并导出 PDF（${selectedIds.length}）` }}
-      </button>
-    </div>
-
     <div v-if="loading" class="meta">加载中…</div>
     <template v-else>
-      <div class="group-sections">
-        <section
-          v-for="section in sections"
-          :key="section.key"
-          class="group-section card"
-          :class="{ collapsed: isCollapsed(section.key) }"
-        >
-          <header class="group-head">
-            <div class="group-head-lead">
-              <button
-                type="button"
-                class="group-collapse-btn"
-                :aria-expanded="!isCollapsed(section.key)"
-                :aria-controls="`group-body-${section.key}`"
-                :aria-label="isCollapsed(section.key) ? '展开分组' : '折叠分组'"
-                @click="toggleCollapse(section.key)"
-              >
-                <span class="group-chevron" aria-hidden="true">▸</span>
-              </button>
-              <div class="group-head-info">
-                <template v-if="section.group && editingGroupId === section.group.id">
-                  <input
-                    ref="renameInputEl"
-                    v-model="editingGroupName"
-                    class="group-title-input"
-                    maxlength="80"
-                    @keydown.enter.prevent="commitRename(section.group)"
-                    @keydown.escape.prevent="cancelRename"
-                    @blur="commitRename(section.group)"
-                  />
-                </template>
+      <div class="list-board">
+        <div v-if="entries.length" class="list-toolbar">
+          <label class="check-line">
+            <input type="checkbox" :checked="allSelectableChecked" @change="toggleSelectAll" />
+            全选齐套
+          </label>
+          <span class="meta">已选 {{ selectedIds.length }} · 共 {{ entries.length }} 条</span>
+          <div class="list-toolbar-actions">
+            <button class="btn btn-primary btn-sm" :disabled="!selectedIds.length || batchComposing" @click="composeSelected">
+              {{ batchComposing ? '合并拼版中…' : `合并导出（${selectedIds.length}）` }}
+            </button>
+          </div>
+        </div>
+
+        <div class="group-sections">
+          <section
+            v-for="section in sections"
+            :key="section.key"
+            class="group-section"
+            :class="{ collapsed: isCollapsed(section.key) }"
+          >
+            <header class="group-head">
+              <div class="group-head-lead">
                 <button
-                  v-else-if="section.group"
                   type="button"
-                  class="group-title-btn"
-                  title="点击改名"
-                  @click="startRename(section.group)"
+                  class="group-collapse-btn"
+                  :aria-expanded="!isCollapsed(section.key)"
+                  :aria-controls="`group-body-${section.key}`"
+                  :aria-label="isCollapsed(section.key) ? '展开分组' : '折叠分组'"
+                  @click="toggleCollapse(section.key)"
                 >
-                  {{ section.title }}
+                  <span class="group-chevron" aria-hidden="true">▸</span>
                 </button>
-                <span v-else class="group-title">{{ section.title }}</span>
-                <span class="meta group-meta">
-                  {{ section.entries.length }} 条 · 合计 {{ formatAmount(section.amountSum) }}
-                  <span v-if="section.group" :class="section.group.complete ? 'badge badge-ok' : 'badge badge-warn'">
-                    {{ section.group.complete ? '齐套可导出' : `缺套 ${section.group.incomplete_count}` }}
+                <div class="group-head-info">
+                  <template v-if="section.group && editingGroupId === section.group.id">
+                    <input
+                      ref="renameInputEl"
+                      v-model="editingGroupName"
+                      class="group-title-input"
+                      maxlength="80"
+                      @keydown.enter.prevent="commitRename(section.group)"
+                      @keydown.escape.prevent="cancelRename"
+                      @blur="commitRename(section.group)"
+                    />
+                  </template>
+                  <button
+                    v-else-if="section.group"
+                    type="button"
+                    class="group-title-btn"
+                    title="点击改名"
+                    @click="startRename(section.group)"
+                  >
+                    {{ section.title }}
+                  </button>
+                  <span v-else class="group-title">{{ section.title }}</span>
+                  <span class="group-meta">
+                    <span>{{ section.entries.length }} 条</span>
+                    <span>·</span>
+                    <span>{{ formatAmount(section.amountSum) }}</span>
+                    <span
+                      v-if="section.group"
+                      class="chip"
+                      :class="section.group.complete ? 'chip-ok' : 'chip-warn'"
+                    >
+                      {{ section.group.complete ? '齐套' : `缺 ${section.group.incomplete_count}` }}
+                    </span>
+                    <span v-else-if="section.entries.length" class="chip chip-muted">未分组</span>
                   </span>
-                  <span v-else-if="section.entries.length" class="badge badge-warn">未分组</span>
-                </span>
+                </div>
               </div>
-            </div>
-            <div class="group-head-actions" @click.stop>
-              <div class="group-head-primary">
-                <button class="btn btn-sm" type="button" @click="selectGroupComplete(section)">选中本组齐套</button>
+              <div class="group-head-actions" @click.stop>
                 <button
                   v-if="section.group"
-                  class="btn btn-primary btn-sm"
+                  class="link-btn"
                   type="button"
                   :disabled="!section.group.complete || composingGroupId === section.group.id"
                   :title="section.group.complete ? '' : '组内有不齐套条目，禁止导出'"
                   @click="composeGroup(section.group)"
                 >
-                  {{ composingGroupId === section.group.id ? '导出中…' : '导出本组 PDF' }}
+                  {{ composingGroupId === section.group.id ? '导出中…' : '导出本组' }}
+                </button>
+                <button class="link-btn" type="button" @click="selectGroupComplete(section)">选中齐套</button>
+                <button
+                  type="button"
+                  class="add-plus add-plus-icon"
+                  :title="section.group ? `在「${section.title}」新建条目` : '新建未分组条目'"
+                  :aria-label="section.group ? `在「${section.title}」新建条目` : '新建未分组条目'"
+                  @click="startDraftEntry(section)"
+                >
+                  <svg class="add-plus-svg" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                  </svg>
+                </button>
+                <button
+                  v-if="section.group"
+                  class="link-btn link-danger"
+                  type="button"
+                  @click="removeGroup(section.group)"
+                >
+                  删除
                 </button>
               </div>
-              <div v-if="section.group" class="group-head-secondary">
-                <button class="btn-ghost danger" type="button" @click="removeGroup(section.group)">删组</button>
+            </header>
+
+            <div v-if="draftingEntryKey === section.key" class="group-add-entry">
+              <div class="inline-create">
+                <input
+                  ref="entryInputEl"
+                  v-model="draftEntryTitle"
+                  class="grow"
+                  placeholder="新条目名称"
+                  maxlength="120"
+                  @keydown.enter.prevent="submitEntry(section)"
+                  @keydown.escape.prevent="cancelDraftEntry"
+                />
+                <button class="btn btn-primary btn-sm" type="button" :disabled="!draftEntryTitle.trim() || creating" @click="submitEntry(section)">
+                  {{ creating ? '创建中…' : '创建' }}
+                </button>
+                <button class="btn-ghost" type="button" @click="cancelDraftEntry">取消</button>
               </div>
             </div>
-          </header>
 
-          <div class="group-add-entry">
-            <div v-if="draftingEntryKey === section.key" class="inline-create">
-              <input
-                ref="entryInputEl"
-                v-model="draftEntryTitle"
-                class="grow"
-                placeholder="新条目名称"
-                maxlength="120"
-                @keydown.enter.prevent="submitEntry(section)"
-                @keydown.escape.prevent="cancelDraftEntry"
-              />
-              <button class="btn btn-primary btn-sm" type="button" :disabled="!draftEntryTitle.trim() || creating" @click="submitEntry(section)">
-                {{ creating ? '创建中…' : '创建' }}
-              </button>
-              <button class="btn-ghost" type="button" @click="cancelDraftEntry">取消</button>
-            </div>
-            <button
-              v-else
-              type="button"
-              class="add-plus"
-              :title="section.group ? `在「${section.title}」新建条目` : '新建未分组条目'"
-              @click="startDraftEntry(section)"
-            >
-              <span aria-hidden="true">+</span>
-              <span class="add-plus-label">新建条目</span>
-            </button>
-          </div>
-
-          <div v-show="!isCollapsed(section.key)" :id="`group-body-${section.key}`" class="group-body">
-            <div v-if="!section.entries.length" class="empty entry-list-empty">本组暂无条目</div>
-            <div v-else class="list entry-list">
-              <div v-for="e in section.entries" :key="e.id" class="entry-row">
-                <label class="entry-check">
-                  <input
-                    type="checkbox"
-                    :disabled="!e.completeness.complete"
-                    :checked="selectedIds.includes(e.id)"
-                    @change="toggleSelect(e)"
-                  />
-                </label>
-                <div class="entry-main">
-                  <h3>
-                    <router-link :to="`/entries/${e.id}`">{{ e.title }}</router-link>
-                  </h3>
-                  <div class="meta entry-meta">
-                    <span v-if="e.note" class="entry-note">{{ e.note }}</span>
-                    <span :class="e.completeness.complete ? 'badge badge-ok' : 'badge badge-warn'">
-                      {{ e.completeness.complete ? '齐套' : `缺：${missingLabel(e.completeness.missing)}` }}
-                    </span>
-                    <span class="amount-tag" :class="e.amount_source">
-                      {{ e.amount_source === 'manual' ? '已手改' : e.amount_source === 'auto' ? '自动' : '无金额' }}
-                    </span>
+            <div v-show="!isCollapsed(section.key)" :id="`group-body-${section.key}`" class="group-body">
+              <div v-if="!section.entries.length" class="empty entry-list-empty">本组暂无条目</div>
+              <div v-else class="list entry-list">
+                <div v-for="e in section.entries" :key="e.id" class="entry-row">
+                  <label class="entry-check">
+                    <input
+                      type="checkbox"
+                      :disabled="!e.completeness.complete"
+                      :checked="selectedIds.includes(e.id)"
+                      @change="toggleSelect(e)"
+                    />
+                  </label>
+                  <div class="entry-main">
+                    <router-link class="entry-title" :to="`/entries/${e.id}`">{{ e.title }}</router-link>
+                    <div class="entry-meta">
+                      <span v-if="e.note" class="entry-note">{{ e.note }}</span>
+                      <span class="chip" :class="e.completeness.complete ? 'chip-ok' : 'chip-warn'">
+                        {{ e.completeness.complete ? '齐套' : `缺：${missingLabel(e.completeness.missing)}` }}
+                      </span>
+                      <span class="chip" :class="amountChipClass(e.amount_source)">
+                        {{ e.amount_source === 'manual' ? '手改' : e.amount_source === 'auto' ? '自动' : '无金额' }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="amount-edit">
+                    <span class="amount-prefix" aria-hidden="true">¥</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :value="e.amount ?? ''"
+                      placeholder="0.00"
+                      @change="onAmountChange(e, $event)"
+                    />
+                  </div>
+                  <select class="entry-group-select" :value="e.group_id ?? ''" @change="onGroupChange(e, $event)">
+                    <option value="">未分组</option>
+                    <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+                  </select>
+                  <div class="entry-actions">
+                    <button
+                      class="link-btn link-accent"
+                      type="button"
+                      :disabled="!e.completeness.complete || composingId === e.id"
+                      @click="compose(e)"
+                    >
+                      {{ composingId === e.id ? '拼版中…' : '拼版' }}
+                    </button>
+                    <router-link class="link-btn" :to="`/entries/${e.id}`">详情</router-link>
+                    <button class="link-btn link-danger" type="button" @click="remove(e)">删除</button>
                   </div>
                 </div>
-                <div class="amount-edit">
-                  <span class="amount-prefix" aria-hidden="true">¥</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    :value="e.amount ?? ''"
-                    placeholder="0.00"
-                    @change="onAmountChange(e, $event)"
-                  />
-                </div>
-                <select class="entry-group-select" :value="e.group_id ?? ''" @change="onGroupChange(e, $event)">
-                  <option value="">未分组</option>
-                  <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
-                </select>
-                <div class="entry-actions">
-                  <button
-                    class="btn btn-primary btn-sm"
-                    :disabled="!e.completeness.complete || composingId === e.id"
-                    @click="compose(e)"
-                  >
-                    {{ composingId === e.id ? '拼版中…' : '拼版' }}
-                  </button>
-                  <router-link class="btn btn-sm" :to="`/entries/${e.id}`">详情</router-link>
-                  <button class="btn-ghost danger" type="button" @click="remove(e)">删除</button>
-                </div>
               </div>
             </div>
-          </div>
-        </section>
-      </div>
-
-      <div class="add-group-footer">
-        <div v-if="draftingGroup" class="inline-create card">
-          <input
-            ref="groupInputEl"
-            v-model="draftGroupName"
-            class="grow"
-            placeholder="新组名称"
-            maxlength="80"
-            @keydown.enter.prevent="submitGroup"
-            @keydown.escape.prevent="cancelDraftGroup"
-          />
-          <button class="btn btn-primary btn-sm" type="button" :disabled="!draftGroupName.trim() || creatingGroup" @click="submitGroup">
-            {{ creatingGroup ? '创建中…' : '创建分组' }}
-          </button>
-          <button class="btn-ghost" type="button" @click="cancelDraftGroup">取消</button>
+          </section>
         </div>
-        <button v-else type="button" class="add-plus add-plus-block" title="新建分组" @click="startDraftGroup">
-          <span aria-hidden="true">+</span>
-          <span class="add-plus-label">新建分组</span>
-        </button>
+
+        <div class="add-group-footer">
+          <div v-if="draftingGroup" class="inline-create">
+            <input
+              ref="groupInputEl"
+              v-model="draftGroupName"
+              class="grow"
+              placeholder="新组名称"
+              maxlength="80"
+              @keydown.enter.prevent="submitGroup"
+              @keydown.escape.prevent="cancelDraftGroup"
+            />
+            <button class="btn btn-primary btn-sm" type="button" :disabled="!draftGroupName.trim() || creatingGroup" @click="submitGroup">
+              {{ creatingGroup ? '创建中…' : '创建分组' }}
+            </button>
+            <button class="btn-ghost" type="button" @click="cancelDraftGroup">取消</button>
+          </div>
+          <button v-else type="button" class="add-plus add-plus-block" title="新建分组" aria-label="新建分组" @click="startDraftGroup">
+            <svg class="add-plus-svg" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
     </template>
   </div>
@@ -211,8 +225,10 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { api, formatAmount, missingLabel } from '../api/client'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
+import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
 
 const { askConfirm } = useConfirmDialog()
+const { openBatchUpload } = useBatchUploadDialog()
 const entries = ref([])
 const groups = ref([])
 const loading = ref(true)
@@ -256,6 +272,12 @@ function persistCollapsed() {
 
 function isCollapsed(key) {
   return collapsedKeys.value.has(key)
+}
+
+function amountChipClass(source) {
+  if (source === 'manual') return 'chip-warn'
+  if (source === 'auto') return 'chip-ok'
+  return 'chip-muted'
 }
 
 function toggleCollapse(key) {
@@ -323,6 +345,10 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function openUpload() {
+  openBatchUpload({ onDone: load })
 }
 
 function toggleSelect(e) {
