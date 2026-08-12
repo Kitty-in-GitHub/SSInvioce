@@ -12,13 +12,10 @@ from ..models import MaterialType
 from .amount import parse_amount_from_filename, parse_amount_from_pdf_text
 from .classify import classify_file
 from .ocr import ocr_available, ocr_image
+from .settings_store import get_classify_keywords
 from .storage import resolve_stored
 
 log = get_logger("features")
-
-INVOICE_WORDS = ("发票", "电子发票", "增值税", "价税合计", "发票代码", "发票号码")
-ORDER_WORDS = ("订单", "商品", "规格", "件数", "淘宝", "京东", "拼多多", "天猫", "待收货", "已发货")
-PAYMENT_WORDS = ("支付成功", "付款成功", "实付", "收款方", "支付宝", "微信支付", "交易成功", "转账")
 
 MERCHANT_RE = re.compile(
     r"(?:销售方|销\s*方|商家|店铺|收款方|商户名称)[:：\s]*([^\n\r]{2,40})",
@@ -62,16 +59,17 @@ class FileFeatures:
 
 def _pick_type_from_text(text: str, filename: str, width: int | None, height: int | None) -> MaterialType:
     compact = re.sub(r"\s+", "", text or "")
+    keywords = get_classify_keywords()
     scores = {"invoice": 0, "order": 0, "payment": 0}
-    for w in INVOICE_WORDS:
-        if w in compact or w in filename:
-            scores["invoice"] += 2 if w in compact else 1
-    for w in ORDER_WORDS:
-        if w in compact or w in filename:
-            scores["order"] += 2 if w in compact else 1
-    for w in PAYMENT_WORDS:
-        if w in compact or w in filename:
-            scores["payment"] += 2 if w in compact else 1
+    for kind in ("invoice", "order", "payment"):
+        for w in keywords.get(kind, []):
+            word = (w or "").strip()
+            if not word:
+                continue
+            if word in compact:
+                scores[kind] += 2
+            elif word in filename or word.lower() in filename.lower():
+                scores[kind] += 1
 
     best = max(scores, key=scores.get)
     if scores[best] > 0:

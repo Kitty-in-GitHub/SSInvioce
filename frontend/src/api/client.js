@@ -184,6 +184,15 @@ export const api = {
     const filename = decodeURIComponent(match?.[1] || match?.[2] || `group_${groupId}.pdf`)
     return { blob, filename }
   },
+  getSettings: () => request('/api/settings'),
+  updateSettings: (payload) =>
+    request('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  resetClassifyKeywords: () =>
+    request('/api/settings/classify-keywords/reset', { method: 'POST' }),
 }
 
 export function formatAmount(val) {

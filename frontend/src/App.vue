@@ -22,6 +22,17 @@
           <span class="sidebar-link-icon" aria-hidden="true">{{ item.icon }}</span>
           <span>{{ item.label }}</span>
         </router-link>
+        <div class="sidebar-nav-spacer" aria-hidden="true" />
+        <router-link
+          to="/settings"
+          class="sidebar-link"
+          active-class=""
+          exact-active-class=""
+          :class="{ active: isNavActive(settingsNav) }"
+        >
+          <span class="sidebar-link-icon" aria-hidden="true">{{ settingsNav.icon }}</span>
+          <span>{{ settingsNav.label }}</span>
+        </router-link>
       </nav>
 
       <div class="sidebar-footer">
@@ -61,11 +72,12 @@ const route = useRoute()
 const apiError = ref('')
 const apiInfo = ref(null)
 
-/** 侧栏导航（批量上传用弹窗，不进侧栏） */
+/** 侧栏导航（批量上传用弹窗，不进侧栏；设置固定在底部） */
 const navItems = [
   { to: '/', label: '条目', icon: '☰', match: ['/', '/entries'] },
   { to: '/inbox', label: '收件箱', icon: '▢' },
 ]
+const settingsNav = { to: '/settings', label: '设置', icon: '⚙' }
 
 function isNavActive(item) {
   const path = route.path
