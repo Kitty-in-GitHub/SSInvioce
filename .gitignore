@@ -25,3 +25,4 @@ SKILL (1).md
 
 # Green portable pack output (rebuild via build-green.bat)
 release/
+test_images/

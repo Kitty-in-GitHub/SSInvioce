@@ -17,8 +17,12 @@ from .storage import resolve_stored
 
 log = get_logger("features")
 
+MERCHANT_FULL_RE = re.compile(
+    r"商户全称[:：\s]*([^\n\r收单支付交易]{2,40})",
+    re.UNICODE,
+)
 MERCHANT_RE = re.compile(
-    r"(?:销售方|销\s*方|商家|店铺|收款方|商户名称)[:：\s]*([^\n\r]{2,40})",
+    r"(?:销售方|销\s*方|商户名称|店铺|收款方|商家(?!小程序))[:：\s]*([^\n\r]{2,40})",
     re.UNICODE,
 )
 DATE_RE = re.compile(
@@ -82,11 +86,25 @@ def _pick_type_from_text(text: str, filename: str, width: int | None, height: in
 
 
 def _extract_merchant(text: str) -> str | None:
-    m = MERCHANT_RE.search(text or "")
-    if not m:
-        return None
-    name = re.sub(r"\s+", "", m.group(1)).strip(" :：|-_")
-    return name[:40] or None
+    raw = text or ""
+    compact = re.sub(r"\s+", "", raw)
+    for pattern in (MERCHANT_FULL_RE, MERCHANT_RE):
+        m = pattern.search(raw) or pattern.search(compact)
+        if not m:
+            continue
+        name = re.sub(r"\s+", "", m.group(1)).strip(" :：|-_")
+        # Trim trailing field labels glued by OCR compaction
+        for stop in ("收单机构", "支付方式", "交易单号", "商户单号", "当前状态", "支付时间"):
+            if stop in name:
+                name = name.split(stop, 1)[0]
+        name = name[:40]
+        if name and name not in {"小程序", "商家小程序"}:
+            return name
+    # WeChat bill: merchant line sits above signed amount "-30.09"
+    m = re.search(r"([\u4e00-\u9fff]{4,40}(?:公司|店|中心))[-－−+]\d+\.\d{2}", compact)
+    if m:
+        return m.group(1)[:40]
+    return None
 
 
 def _extract_date(text: str) -> str | None:
