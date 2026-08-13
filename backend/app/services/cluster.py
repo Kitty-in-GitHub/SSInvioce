@@ -41,20 +41,26 @@ def _amount_key(amount: float | None) -> str | None:
 
 
 def _title_for(feats: list[FileFeatures], amount: float | None) -> str:
-    for f in feats:
-        if f.merchant:
-            base = f.merchant
-            if amount is not None:
-                return f"{base} ¥{amount:.2f}"
-            return base
+    """Compose title: product (or merchant/stem) + invoice date + amount."""
+    product = next((f.product_name for f in feats if f.product_name), None)
+    merchant = next((f.merchant for f in feats if f.merchant), None)
+    date = next((f.date for f in feats if f.date), None)
+    stem = None
     for f in feats:
         if f.suggested_type == "invoice":
             stem = f.original_name.rsplit(".", 1)[0]
-            if amount is not None:
-                return f"{stem} ¥{amount:.2f}"
-            return stem
+            break
+
+    base = product or merchant or stem
+    parts: list[str] = []
+    if base:
+        parts.append(base)
+    if date:
+        parts.append(date)
     if amount is not None:
-        return f"报销 ¥{amount:.2f}"
+        parts.append(f"¥{amount:.2f}")
+    if parts:
+        return " ".join(parts)
     return "未命名报销"
 
 

@@ -28,35 +28,68 @@
       <h4 class="cluster-section-title">拟建条目（{{ clusters.length }}）</h4>
       <section v-for="c in clusters" :key="c.cluster_id" class="cluster-card card">
         <header class="cluster-card-head">
-          <input v-model="c.title" class="cluster-title-input" />
-          <div class="amount-edit">
-            <span class="amount-prefix">¥</span>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              :value="c.amount ?? ''"
-              placeholder="金额"
-              @change="onClusterAmount(c, $event)"
-            />
+          <div class="cluster-title-amount">
+            <input v-model="c.title" class="cluster-title-input" placeholder="项目名" />
+            <div class="amount-edit cluster-amount-edit">
+              <span class="amount-prefix">¥</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                :value="c.amount ?? ''"
+                placeholder="金额"
+                @change="onClusterAmount(c, $event)"
+              />
+            </div>
           </div>
           <span class="chip" :class="c.complete ? 'chip-ok' : 'chip-warn'">
             {{ c.complete ? '齐套' : `缺：${missingLabel(c.missing)}` }}
           </span>
         </header>
+        <div v-if="c.duplicate_warning" class="dup-warn">
+          <p>{{ formatDupWarn(c.duplicate_warning) }}</p>
+          <div class="dup-warn-actions">
+            <button type="button" class="btn btn-sm" @click="openCompare(c)">对比查看</button>
+            <button
+              v-if="c.duplicate_warning.existing_entry_id != null"
+              type="button"
+              class="btn btn-danger btn-sm"
+              @click="deleteExistingEntry(c)"
+            >
+              删除已有条目
+            </button>
+            <button type="button" class="btn btn-sm" @click="discardCluster(c)">放弃本拟建条目</button>
+          </div>
+        </div>
         <div class="cluster-slots">
           <div v-for="slot in slotTypes" :key="slot" class="cluster-slot">
-            <div class="meta">{{ TYPE_LABELS[slot] }}</div>
             <template v-if="itemInCluster(c, slot)">
-              <div class="cluster-file">{{ itemInCluster(c, slot).original_name }}</div>
-              <select :value="itemInCluster(c, slot).type" @change="onItemType(itemInCluster(c, slot), $event)">
-                <option value="invoice">发票</option>
-                <option value="order">订单截图</option>
-                <option value="payment">支付记录</option>
-                <option value="unknown">未分类</option>
-              </select>
+              <MaterialPreview
+                v-if="itemInCluster(c, slot).localUrl"
+                :url="itemInCluster(c, slot).localUrl"
+                :kind="isPdfName(itemInCluster(c, slot).original_name) ? 'pdf' : 'image'"
+                mode="compact"
+                :title="itemInCluster(c, slot).original_name"
+              />
+              <div class="cluster-slot-row">
+                <span class="cluster-file" :title="itemInCluster(c, slot).original_name">
+                  {{ itemInCluster(c, slot).original_name }}
+                </span>
+                <span class="meta cluster-slot-type">{{ TYPE_LABELS[slot] }}</span>
+                <select :value="itemInCluster(c, slot).type" @change="onItemType(itemInCluster(c, slot), $event)">
+                  <option value="invoice">发票</option>
+                  <option value="order">订单截图</option>
+                  <option value="payment">支付记录</option>
+                  <option value="unknown">未分类</option>
+                </select>
+              </div>
             </template>
-            <div v-else class="empty">空</div>
+            <template v-else>
+              <div class="cluster-slot-row">
+                <span class="empty">空</span>
+                <span class="meta cluster-slot-type">{{ TYPE_LABELS[slot] }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </section>
@@ -130,15 +163,32 @@
       <button class="btn" type="button" :disabled="confirming" @click="recluster">重新归组</button>
       <button class="btn" type="button" @click="clear">清空</button>
     </div>
+
+    <InvoiceDupCompare
+      :open="!!compare"
+      :invoice-number="compare?.invoiceNumber || ''"
+      :left-label="compare?.leftLabel || '本次上传'"
+      :left-url="compare?.leftUrl || ''"
+      :left-kind="compare?.leftKind || 'pdf'"
+      :left-title="compare?.leftTitle || ''"
+      :right-label="compare?.rightLabel || '对照发票'"
+      :right-url="compare?.rightUrl || ''"
+      :right-kind="compare?.rightKind || 'pdf'"
+      :right-title="compare?.rightTitle || ''"
+      @close="compare = null"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { TYPE_LABELS, api, missingLabel } from '../api/client'
+import { useConfirmDialog } from '../composables/useConfirmDialog'
+import InvoiceDupCompare from './InvoiceDupCompare.vue'
 import MaterialPreview from './MaterialPreview.vue'
 
 const emit = defineEmits(['done'])
+const { askConfirm } = useConfirmDialog()
 
 const fileInput = ref(null)
 const dragging = ref(false)
@@ -150,11 +200,122 @@ const error = ref('')
 const msg = ref('')
 const confirming = ref(false)
 const ocrAvailable = ref(null)
+const compare = ref(null)
 
 const slotTypes = ['invoice', 'order', 'payment']
 
 function isPdfName(name) {
   return /\.pdf$/i.test(name || '')
+}
+
+function previewKindFromNameMime(name, mime) {
+  if (isPdfName(name) || (mime || '').includes('pdf')) return 'pdf'
+  return 'image'
+}
+
+function formatDupWarn(w) {
+  if (!w) return ''
+  const no = w.invoice_number ? `（发票号码 ${w.invoice_number}）` : ''
+  if (w.reason === 'same_batch_number') {
+    return `与本批另一文件发票号码相同${no}；可对比后删除其一`
+  }
+  if (w.reason === 'file_hash') {
+    return `与本批另一文件内容相同（疑似重复文件）${no}；可对比后删除其一`
+  }
+  const title = w.existing_entry_title || (w.existing_entry_id != null ? `#${w.existing_entry_id}` : '已有材料')
+  return `可能与已有条目「${title}」重复${no}；可对比、删除已有条目，或放弃本次`
+}
+
+function invoiceItemInCluster(cluster) {
+  return itemInCluster(cluster, 'invoice')
+}
+
+function openCompare(cluster) {
+  const w = cluster.duplicate_warning
+  const inv = invoiceItemInCluster(cluster)
+  if (!w || !inv?.localUrl) {
+    error.value = '无法打开对比：缺少本次发票预览'
+    return
+  }
+  const left = {
+    leftLabel: '本次上传',
+    leftUrl: inv.localUrl,
+    leftKind: previewKindFromNameMime(inv.original_name, inv.mime),
+    leftTitle: inv.original_name,
+  }
+  if (w.existing_material_id != null) {
+    compare.value = {
+      invoiceNumber: w.invoice_number || '',
+      ...left,
+      rightLabel: w.existing_entry_title ? `已有：${w.existing_entry_title}` : '已有发票',
+      rightUrl: api.materialFileUrl(w.existing_material_id),
+      rightKind: previewKindFromNameMime(w.existing_original_name, w.existing_mime),
+      rightTitle: w.existing_original_name || `材料 #${w.existing_material_id}`,
+    }
+    return
+  }
+  if (w.peer_temp_id) {
+    const peer = items.value.find((it) => it.temp_id === w.peer_temp_id)
+    if (!peer?.localUrl) {
+      error.value = '无法打开对比：对照文件预览不可用'
+      return
+    }
+    compare.value = {
+      invoiceNumber: w.invoice_number || '',
+      ...left,
+      rightLabel: '本批另一文件',
+      rightUrl: peer.localUrl,
+      rightKind: previewKindFromNameMime(peer.original_name, peer.mime),
+      rightTitle: peer.original_name,
+    }
+    return
+  }
+  error.value = '没有可对照的已有发票'
+}
+
+async function deleteExistingEntry(cluster) {
+  const w = cluster.duplicate_warning
+  const entryId = w?.existing_entry_id
+  if (entryId == null) return
+  const title = w.existing_entry_title || `#${entryId}`
+  const ok = await askConfirm({
+    title: '删除已有条目',
+    message: `确定删除已有条目「${title}」及其全部材料？删除后本拟建条目可正常入库。`,
+    confirmText: '删除已有条目',
+    cancelText: '取消',
+    danger: true,
+  })
+  if (!ok) return
+  error.value = ''
+  try {
+    await api.deleteEntry(entryId)
+    await loadEntries()
+    await recluster()
+    msg.value = `已删除条目「${title}」`
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function discardCluster(cluster) {
+  const tids = [...(cluster.temp_ids || [])]
+  if (!tids.length) return
+  const ok = await askConfirm({
+    title: '放弃本拟建条目',
+    message: `将从本批移除「${cluster.title}」中的 ${tids.length} 个文件，不会写入库。`,
+    confirmText: '放弃',
+    cancelText: '取消',
+    danger: true,
+  })
+  if (!ok) return
+  error.value = ''
+  try {
+    const res = await api.classifyDiscard(tids)
+    applyPreview(res, [])
+    msg.value = '已放弃该拟建条目'
+  } catch (e) {
+    error.value = e.message
+  }
 }
 
 const unmatchedItems = computed(() => {

@@ -23,6 +23,17 @@ class EntryUpdate(BaseModel):
     clear_group: bool = False
 
 
+class DuplicateWarning(BaseModel):
+    reason: str
+    invoice_number: Optional[str] = None
+    existing_entry_id: Optional[int] = None
+    existing_entry_title: Optional[str] = None
+    existing_material_id: Optional[int] = None
+    existing_original_name: Optional[str] = None
+    existing_mime: Optional[str] = None
+    peer_temp_id: Optional[str] = None
+
+
 class MaterialOut(BaseModel):
     id: int
     entry_id: Optional[int]
@@ -34,6 +45,10 @@ class MaterialOut(BaseModel):
     height: Optional[int]
     created_at: str
     url: str
+    invoice_number: Optional[str] = None
+    invoice_code: Optional[str] = None
+    content_sha256: Optional[str] = None
+    duplicate_warning: Optional[DuplicateWarning] = None
 
 
 class Completeness(BaseModel):

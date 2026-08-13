@@ -47,9 +47,9 @@ start-dev.bat
 2. 用 `D:\Miniconda\envs\star-invoice\npm.cmd` 安装前端依赖
 3. 启动 API：`http://127.0.0.1:8765`（**不用 8000**，避免和本机其他服务冲突；开发模式带 `--reload`，改 `backend/` 会自动热重启）
 4. 健康检查确认 `service=star-invoice-helper`
-5. 启动 Vite：`http://127.0.0.1:5173`（代理 `/api` → `8765`）
+5. 启动 Vite：`http://127.0.0.1:5180`（代理 `/api` → `8765`；不用 5173，避免和 PhotoProcesser 等冲突）
 
-浏览器打开 **http://127.0.0.1:5173**。顶部应显示「API 已连接」。
+浏览器打开 **http://127.0.0.1:5180**。顶部应显示「API 已连接」。
 
 手动分步：
 

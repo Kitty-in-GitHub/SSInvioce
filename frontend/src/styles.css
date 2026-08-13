@@ -407,6 +407,10 @@ button, input, select, textarea { font: inherit; }
   background: rgba(28, 26, 23, 0.45);
   backdrop-filter: blur(2px);
 }
+/* Above batch upload / compare modals so confirms are never covered */
+.modal-backdrop-confirm {
+  z-index: 1200;
+}
 .modal-card {
   width: min(420px, 100%);
   background: var(--card);
@@ -493,14 +497,28 @@ button, input, select, textarea { font: inherit; }
   gap: 0.5rem 0.75rem;
   margin-bottom: 0.65rem;
 }
+.cluster-title-amount {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .cluster-title-input {
-  flex: 1 1 180px;
-  min-width: 140px;
+  flex: 1 1 auto;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0.4rem 0.6rem;
   font-weight: 600;
   background: white;
+}
+.cluster-amount-edit {
+  flex: 0 0 7.5rem;
+  width: 7.5rem;
+}
+.cluster-amount-edit input {
+  width: 100%;
 }
 .cluster-slots {
   display: grid;
@@ -516,6 +534,27 @@ button, input, select, textarea { font: inherit; }
   display: grid;
   gap: 0.35rem;
   align-content: start;
+}
+.cluster-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.cluster-slot-row .cluster-file {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cluster-slot-row .cluster-slot-type {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.cluster-slot-row select {
+  flex: 0 0 auto;
+  max-width: 7.5rem;
 }
 .cluster-file {
   font-size: 0.85rem;
@@ -1133,6 +1172,69 @@ a.link-btn {
 .empty { color: var(--muted); font-size: 0.9rem; }
 .error { color: var(--danger); margin: 0.5rem 0; }
 .okmsg { color: var(--ok); margin: 0.5rem 0; }
+.dup-warn {
+  margin: 0.45rem 0 0;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  background: #fff6e8;
+  border: 1px solid #e8c48a;
+  color: #8a5a12;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+.dup-warn > p {
+  margin: 0;
+}
+.dup-warn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.cluster-card .dup-warn {
+  margin: 0 0 0.65rem;
+}
+.invoice-dup-compare {
+  width: min(1100px, 96vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.dup-compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0.15rem 0.25rem;
+}
+.dup-compare-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.dup-compare-label {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.dup-compare-name {
+  margin: 0;
+  word-break: break-all;
+}
+.dup-compare-pane .material-preview.mode-detail .pdf-frame {
+  min-height: 58vh;
+  height: 58vh;
+}
+@media (max-width: 800px) {
+  .dup-compare-grid {
+    grid-template-columns: 1fr;
+  }
+  .dup-compare-pane .material-preview.mode-detail .pdf-frame {
+    min-height: 42vh;
+    height: 42vh;
+  }
+}
 
 @media (max-width: 900px) {
   .entry-row {

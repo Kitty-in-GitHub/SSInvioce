@@ -56,8 +56,8 @@
       </main>
     </div>
 
-    <ConfirmDialog />
     <BatchUploadDialog />
+    <ConfirmDialog />
   </div>
 </template>
 

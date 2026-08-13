@@ -35,7 +35,7 @@ async function request(path, options = {}) {
     const detail = data?.detail ?? data ?? res.statusText
     let message = await formatDetail(detail)
     if (res.status === 404) {
-      message = `接口不存在或后端不是本项目（${options.method || 'GET'} ${path}）。请确认 Vite 代理指向 8765，且运行的是报销助手 API。详情：${message || 'Not Found'}`
+      message = `接口不存在或后端不是本项目（${options.method || 'GET'} ${path}）。请确认 Vite 代理指向报销助手 API（8765），且打开的是本项目前端（5180）。详情：${message || 'Not Found'}`
     }
     const err = new Error(message || res.statusText)
     err.status = res.status
@@ -100,12 +100,19 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ temp_ids: tempIds || null }),
     }),
+  classifyDiscard: (tempIds) =>
+    request('/api/classify/discard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ temp_ids: tempIds || [] }),
+    }),
   classifyConfirm: (payload) =>
     request('/api/classify/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Array.isArray(payload) ? { items: payload, clusters: [] } : payload),
     }),
+  materialFileUrl: (id) => `/api/materials/${id}/file`,
   composeEntry: async (id) => {
     let res
     try {

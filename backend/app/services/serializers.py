@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from ..models import Completeness, MaterialOut
+from typing import Any
+
+from ..models import Completeness, DuplicateWarning, MaterialOut
 
 
 def material_url(material_id: int) -> str:
@@ -27,7 +29,8 @@ def completeness_from_types(types: set[str]) -> Completeness:
     )
 
 
-def material_to_out(row: dict) -> MaterialOut:
+def material_to_out(row: dict, *, duplicate_warning: dict[str, Any] | None = None) -> MaterialOut:
+    warn = DuplicateWarning(**duplicate_warning) if duplicate_warning else None
     return MaterialOut(
         id=row["id"],
         entry_id=row["entry_id"],
@@ -39,4 +42,8 @@ def material_to_out(row: dict) -> MaterialOut:
         height=row["height"],
         created_at=row["created_at"],
         url=material_url(row["id"]),
+        invoice_number=row.get("invoice_number"),
+        invoice_code=row.get("invoice_code"),
+        content_sha256=row.get("content_sha256"),
+        duplicate_warning=warn,
     )

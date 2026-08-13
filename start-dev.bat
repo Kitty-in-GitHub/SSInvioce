@@ -31,7 +31,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting Vite on http://127.0.0.1:5173  ^(proxy /api -^> %API_PORT%^)
+echo Starting Vite on http://127.0.0.1:5180  ^(proxy /api -^> %API_PORT%^)
 pushd frontend
 call "%NPM%" run dev
 popd

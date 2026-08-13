@@ -7,7 +7,9 @@ const API_TARGET = 'http://127.0.0.1:8765'
 export default defineConfig({
   plugins: [vue()],
   server: {
-    port: 5173,
+    // Avoid PhotoProcesser / other Vite apps on 5173
+    port: 5180,
+    strictPort: true,
     proxy: {
       '/api': {
         target: API_TARGET,

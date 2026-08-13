@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="state.open" class="modal-backdrop" @click.self="cancel">
+    <div v-if="state.open" class="modal-backdrop modal-backdrop-confirm" @click.self="cancel">
       <div class="modal-card" role="dialog" aria-modal="true" :aria-labelledby="titleId">
         <h3 :id="titleId" class="modal-title">{{ state.title }}</h3>
         <p class="modal-message">{{ state.message }}</p>

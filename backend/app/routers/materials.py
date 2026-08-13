@@ -11,6 +11,8 @@ from ..logging_config import get_logger
 from ..models import MaterialAssign, MaterialOut, MaterialType, MaterialTypeUpdate
 from ..services.amount import apply_auto_amount
 from ..services.classify import classify_file
+from ..services.duplicates import find_invoice_duplicate, warning_from_hit
+from ..services.features import extract_features, normalize_invoice_digits
 from ..services.serializers import material_to_out
 from ..services.storage import delete_file, move_inbox_to_entry, probe_image_size, resolve_stored, store_upload
 
@@ -63,17 +65,36 @@ async def upload_material(
     if suffix != ".pdf":
         width, height = probe_image_size(abs_path)
 
-    mat_type = type or classify_file(file.filename, width=width, height=height)
+    feat = extract_features(
+        temp_id="",
+        original_name=file.filename,
+        stored_path=rel,
+        abs_path=abs_path,
+        width=width,
+        height=height,
+    )
+    mat_type = type or feat.suggested_type or classify_file(file.filename, width=width, height=height)
     mime = _guess_mime(file.filename, file.content_type)
     ts = now_iso()
+    inv_no = normalize_invoice_digits(feat.invoice_number) if mat_type == "invoice" else None
+    inv_code = normalize_invoice_digits(feat.invoice_code) if mat_type == "invoice" else None
+    digest = feat.content_sha256
 
     with get_conn() as conn:
+        dup_warn = None
+        if mat_type == "invoice" and inv_no:
+            hit = find_invoice_duplicate(conn, inv_no)
+            if hit:
+                dup_warn = warning_from_hit(reason="invoice_number", hit=hit)
         cur = conn.execute(
             """
-            INSERT INTO materials (entry_id, type, original_name, stored_path, mime, width, height, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO materials (
+                entry_id, type, original_name, stored_path, mime, width, height, created_at,
+                invoice_number, invoice_code, content_sha256
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (entry_id, mat_type, file.filename, rel, mime, width, height, ts),
+            (entry_id, mat_type, file.filename, rel, mime, width, height, ts, inv_no, inv_code, digest),
         )
         mid = int(cur.lastrowid)
         if entry_id is not None:
@@ -87,14 +108,16 @@ async def upload_material(
                 )
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (mid,)).fetchone()
         log.info(
-            "uploaded material id=%s type=%s entry_id=%s name=%r bytes=%s",
+            "uploaded material id=%s type=%s entry_id=%s name=%r bytes=%s inv=%s dup=%s",
             mid,
             mat_type,
             entry_id,
             file.filename,
             len(content),
+            inv_no,
+            bool(dup_warn),
         )
-        return material_to_out(dict(row))
+        return material_to_out(dict(row), duplicate_warning=dup_warn)
 
 
 @router.patch("/{material_id}", response_model=MaterialOut)
@@ -117,9 +140,43 @@ def update_material(material_id: int, body: MaterialAssign):
         if new_entry is not None and data["entry_id"] != new_entry:
             new_path = move_inbox_to_entry(data["stored_path"], new_entry)
 
+        inv_no = data.get("invoice_number")
+        inv_code = data.get("invoice_code")
+        digest = data.get("content_sha256")
+        dup_warn = None
+        if new_type == "invoice" and not inv_no:
+            feat = extract_features(
+                temp_id="",
+                original_name=data["original_name"],
+                stored_path=new_path,
+            )
+            inv_no = feat.invoice_number
+            inv_code = feat.invoice_code or inv_code
+            digest = feat.content_sha256 or digest
+        if new_type != "invoice":
+            inv_no = None
+            inv_code = None
+        if new_type == "invoice" and inv_no:
+            hit = find_invoice_duplicate(conn, inv_no, exclude_material_ids={material_id})
+            if hit:
+                dup_warn = warning_from_hit(reason="invoice_number", hit=hit)
+
         conn.execute(
-            "UPDATE materials SET entry_id = ?, type = ?, stored_path = ? WHERE id = ?",
-            (new_entry, new_type, new_path, material_id),
+            """
+            UPDATE materials
+            SET entry_id = ?, type = ?, stored_path = ?,
+                invoice_number = ?, invoice_code = ?, content_sha256 = ?
+            WHERE id = ?
+            """,
+            (
+                new_entry,
+                new_type,
+                new_path,
+                normalize_invoice_digits(inv_no) if new_type == "invoice" else None,
+                normalize_invoice_digits(inv_code) if new_type == "invoice" else None,
+                digest,
+                material_id,
+            ),
         )
         if new_entry is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (now_iso(), new_entry))
@@ -131,7 +188,7 @@ def update_material(material_id: int, body: MaterialAssign):
                     original_name=data["original_name"],
                 )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
-        return material_to_out(dict(updated))
+        return material_to_out(dict(updated), duplicate_warning=dup_warn)
 
 @router.patch("/{material_id}/type", response_model=MaterialOut)
 def update_material_type(material_id: int, body: MaterialTypeUpdate):
@@ -139,7 +196,41 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="material not found")
-        conn.execute("UPDATE materials SET type = ? WHERE id = ?", (body.type, material_id))
+        data = dict(row)
+        inv_no = data.get("invoice_number")
+        inv_code = data.get("invoice_code")
+        digest = data.get("content_sha256")
+        dup_warn = None
+        if body.type == "invoice" and not inv_no:
+            feat = extract_features(
+                temp_id="",
+                original_name=data["original_name"],
+                stored_path=data["stored_path"],
+            )
+            inv_no = feat.invoice_number
+            inv_code = feat.invoice_code or inv_code
+            digest = feat.content_sha256 or digest
+        if body.type != "invoice":
+            inv_no = None
+            inv_code = None
+        if body.type == "invoice" and inv_no:
+            hit = find_invoice_duplicate(conn, inv_no, exclude_material_ids={material_id})
+            if hit:
+                dup_warn = warning_from_hit(reason="invoice_number", hit=hit)
+        conn.execute(
+            """
+            UPDATE materials
+            SET type = ?, invoice_number = ?, invoice_code = ?, content_sha256 = ?
+            WHERE id = ?
+            """,
+            (
+                body.type,
+                normalize_invoice_digits(inv_no) if body.type == "invoice" else None,
+                normalize_invoice_digits(inv_code) if body.type == "invoice" else None,
+                digest,
+                material_id,
+            ),
+        )
         if row["entry_id"] is not None:
             conn.execute(
                 "UPDATE entries SET updated_at = ? WHERE id = ?",
@@ -153,7 +244,7 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
                     original_name=row["original_name"],
                 )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
-        return material_to_out(dict(updated))
+        return material_to_out(dict(updated), duplicate_warning=dup_warn)
 
 
 @router.get("/{material_id}/file")
