@@ -165,10 +165,15 @@ def get_material_file(material_id: int):
         path = resolve_stored(row["stored_path"])
         if not path.exists():
             raise HTTPException(status_code=404, detail="file missing on disk")
+        name = row["original_name"] or path.name
+        mime = row["mime"] or _guess_mime(name, None)
+        if path.suffix.lower() == ".pdf" or (mime or "").lower() == "application/pdf":
+            mime = "application/pdf"
         return FileResponse(
             path,
-            media_type=row["mime"] or "application/octet-stream",
-            filename=row["original_name"],
+            media_type=mime or "application/octet-stream",
+            filename=name,
+            content_disposition_type="inline",
         )
 
 

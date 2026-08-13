@@ -77,13 +77,14 @@
         <tbody>
           <tr v-for="item in unmatchedItems" :key="item.temp_id">
             <td>
-              <img
-                v-if="item.localUrl && !item.original_name.toLowerCase().endsWith('.pdf')"
-                class="thumb"
-                :src="item.localUrl"
-                alt=""
+              <MaterialPreview
+                v-if="item.localUrl"
+                :url="item.localUrl"
+                :kind="isPdfName(item.original_name) ? 'pdf' : 'image'"
+                mode="compact"
+                :title="item.original_name"
               />
-              <span v-else class="meta">PDF</span>
+              <span v-else class="meta">—</span>
             </td>
             <td>
               <div>{{ item.original_name }}</div>
@@ -135,6 +136,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { TYPE_LABELS, api, missingLabel } from '../api/client'
+import MaterialPreview from './MaterialPreview.vue'
 
 const emit = defineEmits(['done'])
 
@@ -150,6 +152,10 @@ const confirming = ref(false)
 const ocrAvailable = ref(null)
 
 const slotTypes = ['invoice', 'order', 'payment']
+
+function isPdfName(name) {
+  return /\.pdf$/i.test(name || '')
+}
 
 const unmatchedItems = computed(() => {
   const set = new Set(unmatchedIds.value)
@@ -198,7 +204,7 @@ function applyPreview(res, fileList) {
     const queue = byName.get(it.original_name) || []
     const file = queue.shift()
     let localUrl = prev?.localUrl || null
-    if (!localUrl && file && !file.name.toLowerCase().endsWith('.pdf')) {
+    if (!localUrl && file) {
       localUrl = URL.createObjectURL(file)
     }
     return {

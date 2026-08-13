@@ -28,8 +28,12 @@
         <tbody>
           <tr v-for="m in items" :key="m.id">
             <td>
-              <img v-if="isImage(m)" class="thumb" :src="m.url" alt="" />
-              <span v-else class="meta">PDF</span>
+              <MaterialPreview
+                :url="m.url"
+                :kind="previewKind(m)"
+                mode="compact"
+                :title="m.original_name"
+              />
             </td>
             <td>{{ m.original_name }}</td>
             <td>
@@ -59,7 +63,8 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { api } from '../api/client'
+import { api, isImageMaterial, isPdfMaterial } from '../api/client'
+import MaterialPreview from '../components/MaterialPreview.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 
 const { askConfirm } = useConfirmDialog()
@@ -70,8 +75,10 @@ const error = ref('')
 const msg = ref('')
 const assignMap = reactive({})
 
-function isImage(m) {
-  return (m.mime || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(m.original_name)
+function previewKind(m) {
+  if (isPdfMaterial(m)) return 'pdf'
+  if (isImageMaterial(m)) return 'image'
+  return 'image'
 }
 
 async function load() {

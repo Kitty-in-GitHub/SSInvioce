@@ -65,10 +65,14 @@
         <div v-for="slot in slots" :key="slot.type" class="slot">
           <h4>{{ slot.label }}</h4>
           <div class="preview">
-            <template v-if="slot.material">
-              <img v-if="isImage(slot.material)" :src="slot.material.url" :alt="slot.material.original_name" />
-              <div v-else class="empty">PDF：{{ slot.material.original_name }}</div>
-            </template>
+            <MaterialPreview
+              v-if="slot.material"
+              :url="slot.material.url"
+              :kind="previewKind(slot.material)"
+              mode="detail"
+              :title="slot.material.original_name"
+              empty-text="无法预览"
+            />
             <div v-else class="empty">尚未上传</div>
           </div>
           <div class="meta" v-if="slot.material">{{ slot.material.original_name }}</div>
@@ -88,7 +92,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, missingLabel, TYPE_LABELS } from '../api/client'
+import { api, isImageMaterial, isPdfMaterial, missingLabel, TYPE_LABELS } from '../api/client'
+import MaterialPreview from '../components/MaterialPreview.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
@@ -116,8 +121,10 @@ const slots = computed(() => {
   ]
 })
 
-function isImage(m) {
-  return (m.mime || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(m.original_name)
+function previewKind(m) {
+  if (isPdfMaterial(m)) return 'pdf'
+  if (isImageMaterial(m)) return 'image'
+  return 'image'
 }
 
 async function load() {

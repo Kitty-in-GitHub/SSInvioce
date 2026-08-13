@@ -212,3 +212,15 @@ export const TYPE_LABELS = {
 export function missingLabel(missing) {
   return (missing || []).map((t) => TYPE_LABELS[t] || t).join('、')
 }
+
+export function isImageMaterial(m) {
+  if (!m) return false
+  const name = m.original_name || m.name || ''
+  return (m.mime || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(name)
+}
+
+export function isPdfMaterial(m) {
+  if (!m) return false
+  const name = m.original_name || m.name || ''
+  return (m.mime || '').toLowerCase() === 'application/pdf' || /\.pdf$/i.test(name)
+}
