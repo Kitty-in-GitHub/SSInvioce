@@ -55,7 +55,13 @@ function onDone() {
 
 function onKeydown(e) {
   if (!state.open) return
-  if (e.key === 'Escape') tryClose()
+  if (e.key !== 'Escape') return
+  // Nested preview / compare first
+  if (panelRef.value?.hasOverlay?.()) {
+    panelRef.value.closeOverlays?.()
+    return
+  }
+  tryClose()
 }
 
 watch(

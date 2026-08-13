@@ -1,5 +1,9 @@
 <template>
-  <div class="material-preview" :class="[`mode-${mode}`, { clickable: canOpenLightbox }]">
+  <div
+    v-if="mode !== 'lightbox'"
+    class="material-preview"
+    :class="[`mode-${mode}`, { clickable: canOpenLightbox }]"
+  >
     <template v-if="kind === 'image' && url">
       <img class="material-preview-img" :src="url" :alt="title" @click="openLightbox" />
     </template>
@@ -16,27 +20,27 @@
       </button>
     </template>
     <div v-else class="empty">{{ emptyText }}</div>
+  </div>
 
-    <Teleport to="body">
-      <div v-if="lightboxOpen" class="modal-backdrop" @click.self="closeLightbox">
-        <div class="modal-card modal-wide material-preview-modal" role="dialog" aria-modal="true">
-          <div class="modal-head">
-            <div>
-              <h3 class="modal-title">{{ title || '预览' }}</h3>
-            </div>
-            <div class="material-preview-modal-actions">
-              <a v-if="url" class="link-btn" :href="url" target="_blank" rel="noopener">新窗口打开</a>
-              <button class="btn-ghost" type="button" @click="closeLightbox">关闭</button>
-            </div>
+  <Teleport to="body">
+    <div v-if="lightboxOpen" class="modal-backdrop modal-backdrop-compare" @click.self="closeLightbox">
+      <div class="modal-card modal-wide material-preview-modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <div>
+            <h3 class="modal-title">{{ title || '预览' }}</h3>
           </div>
-          <div class="material-preview-modal-body">
-            <img v-if="kind === 'image'" class="material-preview-modal-img" :src="url" :alt="title" />
-            <iframe v-else class="pdf-frame pdf-frame-modal" :src="url" :title="title || 'PDF 预览'" />
+          <div class="material-preview-modal-actions">
+            <a v-if="url" class="link-btn" :href="url" target="_blank" rel="noopener">新窗口打开</a>
+            <button class="btn-ghost" type="button" @click="closeLightbox">关闭</button>
           </div>
         </div>
+        <div class="material-preview-modal-body">
+          <img v-if="kind === 'image'" class="material-preview-modal-img" :src="url" :alt="title" />
+          <iframe v-else class="pdf-frame pdf-frame-modal" :src="url" :title="title || 'PDF 预览'" />
+        </div>
       </div>
-    </Teleport>
-  </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -45,10 +49,14 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 const props = defineProps({
   url: { type: String, default: '' },
   kind: { type: String, default: 'image' }, // image | pdf
-  mode: { type: String, default: 'detail' }, // detail | compact
+  mode: { type: String, default: 'detail' }, // detail | compact | lightbox
   title: { type: String, default: '' },
   emptyText: { type: String, default: '无预览' },
+  /** Controlled open for mode=lightbox (or force-open lightbox) */
+  open: { type: Boolean, default: false },
 })
+
+const emit = defineEmits(['close', 'update:open'])
 
 const lightboxOpen = ref(false)
 
@@ -57,26 +65,42 @@ const canOpenLightbox = computed(
 )
 
 function openLightbox() {
-  if (!canOpenLightbox.value) return
+  if (!props.url) return
   lightboxOpen.value = true
+  emit('update:open', true)
 }
 
 function closeLightbox() {
   lightboxOpen.value = false
+  emit('update:open', false)
+  emit('close')
 }
 
 function onKeydown(e) {
-  if (e.key === 'Escape') closeLightbox()
+  if (e.key === 'Escape' && lightboxOpen.value) closeLightbox()
 }
 
 watch(
+  () => props.open,
+  (v) => {
+    if (v && props.url) lightboxOpen.value = true
+    if (!v) lightboxOpen.value = false
+  },
+  { immediate: true },
+)
+
+watch(
   () => props.url,
-  () => closeLightbox(),
+  () => {
+    if (!props.open) closeLightbox()
+  },
 )
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
-  closeLightbox()
+  lightboxOpen.value = false
 })
+
+defineExpose({ open: openLightbox, close: closeLightbox })
 </script>

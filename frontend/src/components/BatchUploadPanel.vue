@@ -25,7 +25,7 @@
       <span class="batch-loading-spinner" aria-hidden="true" />
       <div>
         <strong>正在识别与归组…</strong>
-        <p class="meta batch-loading-hint">请稍候，完成前无法关闭弹窗</p>
+        <p class="meta batch-loading-hint">请稍候，完成前请勿关闭弹窗</p>
       </div>
     </div>
 
@@ -51,9 +51,7 @@
               />
             </div>
           </div>
-          <span class="chip" :class="c.complete ? 'chip-ok' : 'chip-warn'">
-            {{ c.complete ? '齐套' : `缺：${missingLabel(c.missing)}` }}
-          </span>
+          <span v-if="c.complete" class="chip chip-ok">齐套</span>
         </header>
         <div v-if="c.dupKeepBoth" class="dup-ok">已选择都添加，确认入库时将一并写入</div>
         <div v-else-if="c.duplicate_warning" class="dup-warn">
@@ -63,14 +61,30 @@
           </div>
         </div>
         <div class="cluster-slots">
-          <div v-for="slot in slotTypes" :key="slot" class="cluster-slot">
+          <div
+            v-for="slot in slotTypes"
+            :key="slot"
+            class="cluster-slot"
+            :class="itemInCluster(c, slot) ? 'cluster-slot-filled cluster-slot-clickable' : 'cluster-slot-missing'"
+            :title="itemInCluster(c, slot) ? '点击预览' : `缺少${TYPE_LABELS[slot]}`"
+            @click="openSlotPreview(itemInCluster(c, slot))"
+          >
             <template v-if="itemInCluster(c, slot)">
               <div class="cluster-slot-row">
-                <span class="cluster-file" :title="itemInCluster(c, slot).original_name">
+                <button
+                  type="button"
+                  class="cluster-file-btn"
+                  :title="itemInCluster(c, slot).original_name"
+                  @click.stop="openSlotPreview(itemInCluster(c, slot))"
+                >
                   {{ itemInCluster(c, slot).original_name }}
-                </span>
+                </button>
                 <span class="meta cluster-slot-type">{{ TYPE_LABELS[slot] }}</span>
-                <select :value="itemInCluster(c, slot).type" @change="onItemType(itemInCluster(c, slot), $event)">
+                <select
+                  :value="itemInCluster(c, slot).type"
+                  @click.stop
+                  @change="onItemType(itemInCluster(c, slot), $event)"
+                >
                   <option value="invoice">发票</option>
                   <option value="order">订单截图</option>
                   <option value="payment">支付记录</option>
@@ -80,8 +94,7 @@
             </template>
             <template v-else>
               <div class="cluster-slot-row">
-                <span class="empty">空</span>
-                <span class="meta cluster-slot-type">{{ TYPE_LABELS[slot] }}</span>
+                <span class="cluster-slot-missing-label">{{ TYPE_LABELS[slot] }}</span>
               </div>
             </template>
           </div>
@@ -158,6 +171,40 @@
       <button class="btn" type="button" :disabled="confirming || analyzing" @click="clear">清空</button>
     </div>
 
+    <Teleport to="body">
+      <div
+        v-if="slotPreview"
+        class="modal-backdrop modal-backdrop-preview"
+        @click.self="closeSlotPreview"
+      >
+        <div class="modal-card modal-wide material-preview-modal" role="dialog" aria-modal="true">
+          <div class="modal-head">
+            <div>
+              <h3 class="modal-title">{{ slotPreview.title || '预览' }}</h3>
+            </div>
+            <div class="material-preview-modal-actions">
+              <a class="link-btn" :href="slotPreview.url" target="_blank" rel="noopener">新窗口打开</a>
+              <button class="btn-ghost" type="button" @click="closeSlotPreview">关闭</button>
+            </div>
+          </div>
+          <div class="material-preview-modal-body">
+            <img
+              v-if="slotPreview.kind === 'image'"
+              class="material-preview-modal-img"
+              :src="slotPreview.url"
+              :alt="slotPreview.title"
+            />
+            <iframe
+              v-else
+              class="pdf-frame pdf-frame-modal"
+              :src="slotPreview.url"
+              :title="slotPreview.title || 'PDF 预览'"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <InvoiceDupCompare
       :open="!!compare"
       resolvable
@@ -179,7 +226,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { TYPE_LABELS, api, missingLabel } from '../api/client'
+import { TYPE_LABELS, api } from '../api/client'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import InvoiceDupCompare from './InvoiceDupCompare.vue'
 import MaterialPreview from './MaterialPreview.vue'
@@ -200,6 +247,7 @@ const analyzing = ref(false)
 const ocrAvailable = ref(null)
 const compare = ref(null)
 const compareBusy = ref(false)
+const slotPreview = ref(null)
 /** invoice_number / peer keys the user chose to keep both */
 const keepBothKeys = ref(new Set())
 
@@ -255,10 +303,46 @@ function invoiceItemInCluster(cluster) {
   return itemInCluster(cluster, 'invoice')
 }
 
+function itemPreviewUrl(item) {
+  if (!item) return ''
+  if (item.localUrl) return item.localUrl
+  if (item.temp_id) return api.stagingFileUrl(item.temp_id)
+  return ''
+}
+
+function closeSlotPreview() {
+  slotPreview.value = null
+}
+
+function closeOverlays() {
+  slotPreview.value = null
+  compare.value = null
+}
+
+function openSlotPreview(item) {
+  if (!item) return
+  const url = itemPreviewUrl(item)
+  if (!url) {
+    error.value = '无法预览：文件地址不可用'
+    return
+  }
+  error.value = ''
+  slotPreview.value = {
+    url,
+    kind: previewKindFromNameMime(item.original_name, item.mime),
+    title: item.original_name || '预览',
+  }
+}
+
+function hasOverlay() {
+  return !!slotPreview.value || !!compare.value
+}
+
 function openCompare(cluster) {
   const w = cluster.duplicate_warning
   const inv = invoiceItemInCluster(cluster)
-  if (!w || !inv?.localUrl) {
+  const leftUrl = itemPreviewUrl(inv)
+  if (!w || !leftUrl) {
     error.value = '无法打开对比：缺少本次发票预览'
     return
   }
@@ -267,7 +351,7 @@ function openCompare(cluster) {
     warning: w,
     invoiceNumber: w.invoice_number || '',
     leftLabel: '本次上传',
-    leftUrl: inv.localUrl,
+    leftUrl,
     leftKind: previewKindFromNameMime(inv.original_name, inv.mime),
     leftTitle: inv.original_name,
   }
@@ -284,7 +368,8 @@ function openCompare(cluster) {
   }
   if (w.peer_temp_id) {
     const peer = items.value.find((it) => it.temp_id === w.peer_temp_id)
-    if (!peer?.localUrl) {
+    const rightUrl = itemPreviewUrl(peer)
+    if (!rightUrl) {
       error.value = '无法打开对比：对照文件预览不可用'
       return
     }
@@ -292,7 +377,7 @@ function openCompare(cluster) {
       ...base,
       mode: 'peer',
       rightLabel: '本批另一文件',
-      rightUrl: peer.localUrl,
+      rightUrl,
       rightKind: previewKindFromNameMime(peer.original_name, peer.mime),
       rightTitle: peer.original_name,
     }
@@ -497,9 +582,19 @@ async function handleFiles(fileList) {
   error.value = ''
   msg.value = ''
   analyzing.value = true
+  const beforeIds = new Set(items.value.map((i) => i.temp_id))
   try {
     const res = await api.classifyPreview(files)
     applyPreview(res, files)
+    // Prefer order of newly staged temp_ids over filename matching (Chinese names etc.)
+    const newcomers = (res.items || []).filter((it) => !beforeIds.has(it.temp_id))
+    newcomers.forEach((it, idx) => {
+      const row = items.value.find((x) => x.temp_id === it.temp_id)
+      const file = files[idx]
+      if (!row || !file) return
+      if (row.localUrl) URL.revokeObjectURL(row.localUrl)
+      row.localUrl = URL.createObjectURL(file)
+    })
   } catch (e) {
     error.value = e.message
   } finally {
@@ -528,6 +623,7 @@ function clear({ force = false } = {}) {
   unmatchedIds.value = []
   keepBothKeys.value = new Set()
   compare.value = null
+  slotPreview.value = null
   msg.value = ''
   error.value = ''
 }
@@ -649,5 +745,5 @@ async function confirm() {
 onMounted(loadEntries)
 onUnmounted(() => clear({ force: true }))
 
-defineExpose({ clear, isBusy })
+defineExpose({ clear, isBusy, hasOverlay, closeOverlays, closeSlotPreview })
 </script>

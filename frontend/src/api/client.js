@@ -113,6 +113,7 @@ export const api = {
       body: JSON.stringify(Array.isArray(payload) ? { items: payload, clusters: [] } : payload),
     }),
   materialFileUrl: (id) => `/api/materials/${id}/file`,
+  stagingFileUrl: (tempId) => `/api/classify/staging/${tempId}/file`,
   composeEntry: async (id) => {
     let res
     try {

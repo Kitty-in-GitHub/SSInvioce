@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ..db import get_conn, now_iso
@@ -19,7 +20,7 @@ from ..services.cluster import cluster_features
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
 from ..services.features import FileFeatures, extract_features, normalize_invoice_digits
 from ..services.ocr import ocr_available
-from ..services.storage import delete_file, move_inbox_to_entry, probe_image_size, store_upload
+from ..services.storage import delete_file, move_inbox_to_entry, probe_image_size, resolve_stored, store_upload
 
 router = APIRouter(prefix="/api/classify", tags=["classify"])
 log = get_logger("classify")
@@ -309,6 +310,30 @@ def classify_discard(body: DiscardRequest):
     n = _drop_staged(body.temp_ids)
     log.info("classify discard count=%s remaining=%s", n, len(_STAGING))
     return _build_preview_payload()
+
+
+@router.get("/staging/{temp_id}/file")
+def get_staging_file(temp_id: str):
+    """Serve a staged classify file for in-dialog preview."""
+    staged = _STAGING.get(temp_id)
+    if not staged:
+        raise HTTPException(status_code=404, detail="staged file not found")
+    rel = staged.get("stored_path")
+    if not rel:
+        raise HTTPException(status_code=404, detail="staged path missing")
+    path = resolve_stored(rel)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="file missing on disk")
+    name = staged.get("original_name") or path.name
+    mime = staged.get("mime") or _guess_mime(name, None)
+    if path.suffix.lower() == ".pdf" or (mime or "").lower() == "application/pdf":
+        mime = "application/pdf"
+    return FileResponse(
+        path,
+        media_type=mime or "application/octet-stream",
+        filename=name,
+        content_disposition_type="inline",
+    )
 
 
 @router.post("/recluster", response_model=ClassifyPreviewResponse)
