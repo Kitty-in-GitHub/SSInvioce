@@ -407,7 +407,10 @@ button, input, select, textarea { font: inherit; }
   background: rgba(28, 26, 23, 0.45);
   backdrop-filter: blur(2px);
 }
-/* Above batch upload / compare modals so confirms are never covered */
+/* Above batch upload so nested dialogs are never covered */
+.modal-backdrop-compare {
+  z-index: 1100;
+}
 .modal-backdrop-confirm {
   z-index: 1200;
 }
@@ -1194,6 +1197,16 @@ a.link-btn {
 .cluster-card .dup-warn {
   margin: 0 0 0.65rem;
 }
+.dup-ok {
+  margin: 0 0 0.65rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  background: #eef8f0;
+  border: 1px solid #b7dbc0;
+  color: #1f6b3a;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
 .invoice-dup-compare {
   width: min(1100px, 96vw);
   max-height: 92vh;
@@ -1223,16 +1236,29 @@ a.link-btn {
   word-break: break-all;
 }
 .dup-compare-pane .material-preview.mode-detail .pdf-frame {
-  min-height: 58vh;
-  height: 58vh;
+  min-height: 52vh;
+  height: 52vh;
+}
+.dup-compare-actions {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.dup-compare-hint {
+  margin: 0 0 0.55rem;
+}
+.dup-compare-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 @media (max-width: 800px) {
   .dup-compare-grid {
     grid-template-columns: 1fr;
   }
   .dup-compare-pane .material-preview.mode-detail .pdf-frame {
-    min-height: 42vh;
-    height: 42vh;
+    min-height: 36vh;
+    height: 36vh;
   }
 }
 
@@ -1281,6 +1307,38 @@ a.link-btn {
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 .dropzone.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.dropzone.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.batch-loading {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 0.85rem 0 0.35rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid #c5d7f0;
+  background: #f0f6ff;
+  color: #1f3b66;
+}
+.batch-loading-hint {
+  margin: 0.2rem 0 0;
+}
+.batch-loading-spinner {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.15rem;
+  border: 2px solid #9db7dc;
+  border-top-color: #2f6fed;
+  border-radius: 50%;
+  flex: none;
+  animation: batch-spin 0.7s linear infinite;
+}
+@keyframes batch-spin {
+  to { transform: rotate(360deg); }
+}
 
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td {
