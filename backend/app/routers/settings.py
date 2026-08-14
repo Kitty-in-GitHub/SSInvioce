@@ -44,12 +44,15 @@ class LayoutIn(BaseModel):
 class AppSettings(BaseModel):
     slots: list[SlotIn]
     layout: LayoutIn
+    custom_colors: list[str] = Field(default_factory=list)
+    preset_colors: list[str] = Field(default_factory=list)
     classify_keywords: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class SettingsUpdate(BaseModel):
     slots: list[SlotIn] | None = None
     layout: LayoutIn | None = None
+    custom_colors: list[str] | None = None
     classify_keywords: dict[str, list[str]] | None = None
 
 
@@ -57,6 +60,8 @@ def _to_out(data: dict) -> AppSettings:
     return AppSettings(
         slots=[SlotIn(**s) for s in data["slots"]],
         layout=LayoutIn(**data["layout"]),
+        custom_colors=list(data.get("custom_colors") or []),
+        preset_colors=list(data.get("preset_colors") or []),
         classify_keywords=data.get("classify_keywords") or {},
     )
 
@@ -86,6 +91,8 @@ def put_settings(body: SettingsUpdate):
         patch["slots"] = [s.model_dump() for s in body.slots]
     if body.layout is not None:
         patch["layout"] = body.layout.model_dump()
+    if body.custom_colors is not None:
+        patch["custom_colors"] = body.custom_colors
     if body.classify_keywords is not None:
         patch["classify_keywords"] = body.classify_keywords
     data = update_settings(patch) if patch else get_settings()

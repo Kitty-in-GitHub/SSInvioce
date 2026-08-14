@@ -19,14 +19,23 @@
 
     <section v-show="!loading && tab === 'slots'" class="settings-panel card" role="tabpanel">
       <p class="meta settings-lead">全局一套槽位。发票是唯一特殊 PDF 槽；其它自定义槽一般为图片。删除仍有材料的槽位会被拒绝。</p>
-      <div v-for="(slot, idx) in draftSlots" :key="slot.id + '-' + idx" class="slot-editor">
+      <div
+        v-for="(slot, idx) in draftSlots"
+        :key="slot.id + '-' + idx"
+        class="slot-editor"
+        :class="{ 'slot-color-open': colorMenuIdx === idx }"
+      >
         <div class="slot-editor-head">
           <span class="slot-swatch" :style="{ background: slot.color }" />
           <strong>{{ slot.label || slot.id }}</strong>
           <span class="meta">{{ slot.file_kind === 'pdf' ? 'PDF' : '图片' }}{{ slot.special === 'invoice' ? ' · 发票' : '' }}{{ slot.required ? ' · 必填' : ' · 选填' }}</span>
+          <label class="slot-required">
+            <input v-model="slot.required" type="checkbox" :disabled="slot.special === 'invoice'" />
+            必填（计入齐套）
+          </label>
           <button v-if="slot.special !== 'invoice'" class="btn btn-sm btn-danger" type="button" @click="removeSlot(idx)">删除</button>
         </div>
-        <div class="meta-grid">
+        <div class="meta-grid slot-fields">
           <div class="field">
             <label>显示名</label>
             <input v-model="slot.label" maxlength="40" />
@@ -42,21 +51,114 @@
               <option value="image">图片</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field field-color">
             <label>颜色</label>
-            <input v-model="slot.color" type="color" />
-          </div>
-          <div class="field">
-            <label><input v-model="slot.required" type="checkbox" :disabled="slot.special === 'invoice'" /> 必填（计入齐套）</label>
+            <div class="color-dropdown">
+              <button
+                type="button"
+                class="color-trigger"
+                :aria-expanded="colorMenuIdx === idx"
+                @click.stop="toggleColorMenu(idx)"
+              >
+                <span class="color-trigger-swatch" :style="{ background: slot.color }" />
+                <span class="color-trigger-text">{{ slot.color }}</span>
+                <span class="color-trigger-caret" aria-hidden="true">▾</span>
+              </button>
+              <div v-if="colorMenuIdx === idx" class="color-popover" @click.stop>
+                <div class="color-popover-section">
+                  <div class="color-popover-label">默认色卡</div>
+                  <div class="color-swatch-row" role="listbox">
+                    <button
+                      v-for="c in presetColors"
+                      :key="'p-' + idx + '-' + c"
+                      type="button"
+                      class="color-chip"
+                      role="option"
+                      :aria-selected="normColor(slot.color) === c"
+                      :class="{ active: normColor(slot.color) === c }"
+                      :style="{ background: c }"
+                      :title="c"
+                      @click="pickSlotColor(idx, c)"
+                    />
+                  </div>
+                </div>
+                <div v-if="customColors.length" class="color-popover-section">
+                  <div class="color-popover-label">自定义色卡</div>
+                  <div class="color-swatch-row" role="listbox">
+                    <div v-for="c in customColors" :key="'c-' + idx + '-' + c" class="color-chip-wrap">
+                      <button
+                        type="button"
+                        class="color-chip"
+                        role="option"
+                        :aria-selected="normColor(slot.color) === c"
+                        :class="{ active: normColor(slot.color) === c }"
+                        :style="{ background: c }"
+                        :title="c"
+                        @click="pickSlotColor(idx, c)"
+                      />
+                      <button
+                        type="button"
+                        class="color-chip-remove"
+                        :title="`从色卡移除 ${c}`"
+                        @click.stop="removeCustomColor(c)"
+                      >×</button>
+                    </div>
+                  </div>
+                </div>
+                <button type="button" class="btn btn-sm color-popover-mix" @click="openMixerFor(idx)">调制新颜色…</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
       <div class="actions settings-actions">
         <button class="btn" type="button" @click="addSlot">添加图片槽位</button>
         <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">{{ saving ? '保存中…' : '保存' }}</button>
         <button class="btn" type="button" :disabled="saving" @click="resetAll">恢复默认槽位与版式</button>
       </div>
     </section>
+
+    <Teleport to="body">
+      <div
+        v-if="mixerOpen"
+        class="modal-backdrop modal-backdrop-color-mixer"
+        @click.self="closeMixer"
+      >
+        <div class="modal-card color-mixer-card" role="dialog" aria-modal="true" aria-labelledby="color-mixer-title">
+          <div class="modal-head">
+            <div>
+              <h3 id="color-mixer-title" class="modal-title">调制新颜色</h3>
+              <p class="modal-sub">调色后加入自定义色卡，供各槽位选用。</p>
+            </div>
+            <button class="btn btn-sm btn-ghost" type="button" @click="closeMixer">关闭</button>
+          </div>
+          <div class="color-mixer-body">
+            <label class="color-mixer-preview" :style="{ background: mixerColor }">
+              <input v-model="mixerColor" type="color" class="color-mixer-native" />
+            </label>
+            <div class="field color-mixer-hex-field">
+              <label>色值</label>
+              <input
+                v-model="mixerHexInput"
+                type="text"
+                maxlength="7"
+                spellcheck="false"
+                placeholder="#3d5a80"
+                @change="commitMixerHex"
+                @keydown.enter.prevent="commitMixerHex"
+              />
+            </div>
+          </div>
+          <p v-if="mixerHint" class="meta color-mixer-hint">{{ mixerHint }}</p>
+          <div class="modal-actions">
+            <button class="btn" type="button" @click="closeMixer">取消</button>
+            <button class="btn" type="button" @click="confirmMixer(false)">加入色卡</button>
+            <button class="btn btn-primary" type="button" @click="confirmMixer(true)">加入并用于当前槽位</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <section v-show="!loading && tab === 'layout'" class="settings-panel card" role="tabpanel">
       <p class="meta settings-lead">多页 A4 画板。左侧色板：浅色=未放入，实心=已放入。同一槽位可摆多次。必填槽未放入时无法导出。</p>
@@ -141,7 +243,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import { loadSlots } from '../composables/useSlots'
@@ -154,6 +256,23 @@ const error = ref('')
 const msg = ref('')
 const draftSlots = ref([])
 const draftLayout = ref({ pages: [{ regions: [] }] })
+const presetColors = ref([
+  '#163a7a',
+  '#2a6b4a',
+  '#8a5a12',
+  '#6b3fa0',
+  '#a11f2c',
+  '#1a6a8c',
+  '#5c4a12',
+  '#3d5a80',
+])
+const customColors = ref([])
+const mixerColor = ref('#3d5a80')
+const mixerHexInput = ref('#3d5a80')
+const mixerOpen = ref(false)
+const mixerHint = ref('')
+const activeSlotIdx = ref(0)
+const colorMenuIdx = ref(-1)
 const kwInputs = reactive({})
 const pageIdx = ref(0)
 const selectedIdx = ref(-1)
@@ -168,6 +287,83 @@ const placedIds = computed(() => {
   }
   return ids
 })
+
+watch(mixerColor, (v) => {
+  const c = normColor(v)
+  if (c) mixerHexInput.value = c
+})
+
+function normColor(raw) {
+  const c = String(raw || '').trim().toLowerCase()
+  if (/^#[0-9a-f]{6}$/.test(c)) return c
+  if (/^#[0-9a-f]{3}$/.test(c)) return `#${c[1]}${c[1]}${c[2]}${c[2]}${c[3]}${c[3]}`
+  return ''
+}
+
+function toggleColorMenu(idx) {
+  colorMenuIdx.value = colorMenuIdx.value === idx ? -1 : idx
+  if (colorMenuIdx.value === idx) activeSlotIdx.value = idx
+}
+
+function pickSlotColor(idx, color) {
+  const c = normColor(color)
+  if (!c || !draftSlots.value[idx]) return
+  draftSlots.value[idx].color = c
+  activeSlotIdx.value = idx
+  colorMenuIdx.value = -1
+}
+
+function openMixerFor(idx) {
+  const i = Number.isInteger(idx) ? idx : activeSlotIdx.value
+  activeSlotIdx.value = Math.max(0, Math.min(i, Math.max(0, draftSlots.value.length - 1)))
+  colorMenuIdx.value = -1
+  const seed = draftSlots.value[activeSlotIdx.value]?.color || mixerColor.value || '#3d5a80'
+  const color = normColor(seed) || '#3d5a80'
+  mixerColor.value = color
+  mixerHexInput.value = color
+  mixerHint.value = ''
+  mixerOpen.value = true
+}
+
+function closeMixer() {
+  mixerOpen.value = false
+  mixerHint.value = ''
+}
+
+function commitMixerHex() {
+  let raw = String(mixerHexInput.value || '').trim()
+  if (!raw) {
+    mixerHexInput.value = mixerColor.value
+    return true
+  }
+  if (!raw.startsWith('#')) raw = `#${raw}`
+  const color = normColor(raw)
+  if (!color) {
+    mixerHint.value = '请输入有效的十六进制色值，例如 #3d5a80'
+    return false
+  }
+  mixerColor.value = color
+  mixerHexInput.value = color
+  mixerHint.value = ''
+  return true
+}
+
+function onDocPointerDown(ev) {
+  if (mixerOpen.value) return
+  if (colorMenuIdx.value < 0) return
+  const t = ev.target
+  if (t && typeof t.closest === 'function' && t.closest('.color-dropdown')) return
+  colorMenuIdx.value = -1
+}
+
+function onDocKeydown(ev) {
+  if (ev.key !== 'Escape') return
+  if (mixerOpen.value) {
+    closeMixer()
+    return
+  }
+  colorMenuIdx.value = -1
+}
 
 function labelOf(id) {
   return draftSlots.value.find((s) => s.id === id)?.label || id
@@ -194,9 +390,60 @@ function cloneSettings(res) {
   draftLayout.value = JSON.parse(JSON.stringify(res.layout || { pages: [{ regions: [] }] }))
   if (!draftLayout.value.pages?.length) draftLayout.value.pages = [{ regions: [] }]
   pageIdx.value = Math.min(pageIdx.value, draftLayout.value.pages.length - 1)
+  presetColors.value = (res.preset_colors || []).length ? [...res.preset_colors] : [...presetColors.value]
+  customColors.value = [...(res.custom_colors || [])]
+  activeSlotIdx.value = Math.min(activeSlotIdx.value, Math.max(0, draftSlots.value.length - 1))
   for (const s of draftSlots.value) {
     if (!(s.id in kwInputs)) kwInputs[s.id] = ''
   }
+}
+
+function addCustomColor(applyToActive = false) {
+  if (!commitMixerHex()) return false
+  const color = normColor(mixerColor.value)
+  if (!color) {
+    mixerHint.value = '请选择或输入有效颜色'
+    return false
+  }
+  const preset = new Set(presetColors.value.map(normColor))
+  if (preset.has(color)) {
+    mixerHint.value = '该色已在默认色卡中，无需加入自定义色卡'
+    if (applyToActive) {
+      applyColorToActive(color)
+      return true
+    }
+    return false
+  }
+  if (!customColors.value.includes(color)) {
+    if (customColors.value.length >= 24) {
+      mixerHint.value = '自定义色卡最多 24 色'
+      error.value = '自定义色卡最多 24 色'
+      return false
+    }
+    customColors.value.push(color)
+  }
+  if (applyToActive) applyColorToActive(color)
+  error.value = ''
+  mixerHint.value = ''
+  return true
+}
+
+function confirmMixer(applyToActive = false) {
+  if (addCustomColor(applyToActive)) closeMixer()
+}
+
+function removeCustomColor(color) {
+  const c = normColor(color)
+  customColors.value = customColors.value.filter((x) => x !== c)
+}
+
+function applyColorToActive(color) {
+  const c = normColor(color)
+  if (!c || !draftSlots.value.length) return
+  let idx = activeSlotIdx.value
+  if (idx < 0 || idx >= draftSlots.value.length) idx = 0
+  draftSlots.value[idx].color = c
+  activeSlotIdx.value = idx
 }
 
 async function load() {
@@ -216,15 +463,17 @@ async function load() {
 function addSlot() {
   const n = draftSlots.value.length + 1
   const id = `slot_${n}`
+  const color = presetColors.value[(n - 1) % presetColors.value.length] || '#3d5a80'
   draftSlots.value.push({
     id,
     label: `自定义${n}`,
     file_kind: 'image',
     required: false,
     special: null,
-    color: '#3d5a80',
+    color,
     keywords: [],
   })
+  activeSlotIdx.value = draftSlots.value.length - 1
   kwInputs[id] = ''
 }
 
@@ -235,6 +484,13 @@ function removeSlot(idx) {
   for (const page of draftLayout.value.pages) {
     page.regions = page.regions.filter((r) => r.slot_id !== slot.id)
   }
+  if (activeSlotIdx.value >= draftSlots.value.length) {
+    activeSlotIdx.value = Math.max(0, draftSlots.value.length - 1)
+  } else if (activeSlotIdx.value > idx) {
+    activeSlotIdx.value -= 1
+  }
+  if (colorMenuIdx.value === idx) colorMenuIdx.value = -1
+  else if (colorMenuIdx.value > idx) colorMenuIdx.value -= 1
 }
 
 function addKeyword(slot) {
@@ -340,6 +596,7 @@ async function saveAll() {
         keywords: [...(s.keywords || [])],
       })),
       layout: JSON.parse(JSON.stringify(draftLayout.value)),
+      custom_colors: [...customColors.value],
     }
     const res = await api.updateSettings(payload)
     cloneSettings(res)
@@ -391,5 +648,13 @@ watch(
   },
 )
 
-onMounted(load)
+onMounted(() => {
+  load()
+  document.addEventListener('pointerdown', onDocPointerDown)
+  document.addEventListener('keydown', onDocKeydown)
+})
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onDocPointerDown)
+  document.removeEventListener('keydown', onDocKeydown)
+})
 </script>

@@ -128,8 +128,34 @@ def default_settings() -> dict[str, Any]:
     return {
         "slots": slots,
         "layout": default_layout(),
+        "custom_colors": [],
         "classify_keywords": _keywords_from_slots(slots),
     }
+
+
+def _normalize_hex_color(raw: Any) -> str | None:
+    color = str(raw or "").strip().lower()
+    if re.fullmatch(r"#[0-9a-f]{6}", color):
+        return color
+    if re.fullmatch(r"#[0-9a-f]{3}", color):
+        return "#" + "".join(ch * 2 for ch in color[1:])
+    return None
+
+
+def _normalize_custom_colors(raw: Any) -> list[str]:
+    items = raw if isinstance(raw, list) else []
+    out: list[str] = []
+    seen: set[str] = set()
+    preset = {c.lower() for c in SLOT_COLORS}
+    for item in items:
+        color = _normalize_hex_color(item)
+        if not color or color in seen or color in preset:
+            continue
+        seen.add(color)
+        out.append(color)
+        if len(out) >= 24:
+            break
+    return out
 
 
 def _keywords_from_slots(slots: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -206,9 +232,7 @@ def _normalize_slots(raw: Any, keywords_legacy: Any = None) -> list[dict[str, An
                 invoice_taken = True
                 file_kind = "pdf"
         label = str(item.get("label") or sid).strip()[:40] or sid
-        color = str(item.get("color") or SLOT_COLORS[i % len(SLOT_COLORS)])
-        if not color.startswith("#") or len(color) not in (4, 7):
-            color = SLOT_COLORS[i % len(SLOT_COLORS)]
+        color = _normalize_hex_color(item.get("color")) or SLOT_COLORS[i % len(SLOT_COLORS)]
         fallback_kw = DEFAULT_CLASSIFY_KEYWORDS.get(sid, [])
         keywords = _clean_keywords(item.get("keywords"), fallback_kw)
         required = bool(item.get("required", True))
@@ -248,27 +272,34 @@ def _normalize_all(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "slots": slots,
         "layout": layout,
+        "custom_colors": _normalize_custom_colors(data.get("custom_colors")),
+        "preset_colors": list(SLOT_COLORS),
         "classify_keywords": _keywords_from_slots(slots),
     }
 
 
 def _read_file() -> dict[str, Any]:
     if not SETTINGS_PATH.is_file():
-        return default_settings()
+        return _normalize_all(default_settings())
     try:
         data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
     except Exception:
         log.exception("failed reading settings %s", SETTINGS_PATH)
-        return default_settings()
+        return _normalize_all(default_settings())
     if not isinstance(data, dict):
-        return default_settings()
+        return _normalize_all(default_settings())
     return _normalize_all(data)
 
 
 def _write_file(data: dict[str, Any]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "slots": data.get("slots") or [],
+        "layout": data.get("layout") or default_layout(),
+        "custom_colors": data.get("custom_colors") or [],
+    }
     tmp = SETTINGS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(SETTINGS_PATH)
 
 
@@ -285,6 +316,8 @@ def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
             merged["slots"] = patch["slots"]
         if "layout" in patch and patch["layout"] is not None:
             merged["layout"] = patch["layout"]
+        if "custom_colors" in patch and patch["custom_colors"] is not None:
+            merged["custom_colors"] = patch["custom_colors"]
         if "classify_keywords" in patch and patch["classify_keywords"] is not None and "slots" not in patch:
             kw = patch["classify_keywords"]
             if isinstance(kw, dict):
