@@ -19,14 +19,13 @@ if (-not (Test-Path (Join-Path $PSScriptRoot "frontend\node_modules"))) {
 }
 
 Write-Host "API: http://127.0.0.1:$apiPort"
-Start-Process -FilePath $venvPy -ArgumentList @(
-  "-m", "uvicorn", "backend.app.main:app",
-  "--host", "127.0.0.1",
-  "--port", "$apiPort",
-  "--reload",
-  "--reload-dir", "backend",
-  "--log-level", "info"
-)
+Write-Host "Close the StarInvoice-API window to stop, or run stop-dev.bat if it will not close."
+$stopBat = Join-Path $PSScriptRoot "stop-dev.bat"
+if (Test-Path $stopBat) { & $stopBat }
+Start-Process -FilePath "cmd.exe" -ArgumentList @(
+  "/c",
+  "`"$venvPy`" -m uvicorn backend.app.main:app --host 127.0.0.1 --port $apiPort --reload --reload-dir backend --log-level info --no-use-colors"
+) -WorkingDirectory $PSScriptRoot -WindowStyle Normal
 
 $ok = $false
 for ($i = 0; $i -lt 30; $i++) {

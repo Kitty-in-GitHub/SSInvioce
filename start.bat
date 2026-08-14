@@ -21,4 +21,4 @@ if not exist "%~dp0frontend\dist\index.html" (
 )
 
 echo Open http://127.0.0.1:%API_PORT%
-"%VENV_PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %API_PORT% --log-level info
+"%VENV_PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %API_PORT% --log-level info --no-use-colors

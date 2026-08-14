@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import io
+from functools import lru_cache
 from pathlib import Path
 
-import pymupdf as fitz
 from PIL import Image
 
 from ..config import EXPORTS_DIR, ensure_dirs
@@ -25,13 +25,21 @@ CONTENT_SCALE = 0.90  # draw invoice & screenshots slightly smaller than max fit
 log = get_logger("layout")
 
 
+@lru_cache(maxsize=1)
+def _fitz():
+    import pymupdf as fitz
+
+    return fitz
+
+
 class ComposeError(Exception):
     def __init__(self, message: str, missing: list[str] | None = None):
         super().__init__(message)
         self.missing = missing or []
 
 
-def _load_image_pixmap(path: Path, max_side: int = 2200) -> fitz.Pixmap:
+def _load_image_pixmap(path: Path, max_side: int = 2200):
+    fitz = _fitz()
     pix = fitz.Pixmap(path)
     if pix.alpha:
         pix = fitz.Pixmap(fitz.csRGB, pix)
@@ -45,7 +53,8 @@ def _load_image_pixmap(path: Path, max_side: int = 2200) -> fitz.Pixmap:
     return pix
 
 
-def _pixmap_to_pil(pix: fitz.Pixmap) -> Image.Image:
+def _pixmap_to_pil(pix) -> Image.Image:
+    fitz = _fitz()
     src = pix
     if src.alpha or src.n != 3:
         src = fitz.Pixmap(fitz.csRGB, src)
@@ -54,13 +63,14 @@ def _pixmap_to_pil(pix: fitz.Pixmap) -> Image.Image:
     return Image.frombytes("RGB", (src.width, src.height), src.samples, "raw", "RGB", src.stride)
 
 
-def _pil_to_pixmap(img: Image.Image) -> fitz.Pixmap:
+def _pil_to_pixmap(img: Image.Image):
+    fitz = _fitz()
     buf = io.BytesIO()
     img.convert("RGB").save(buf, format="PNG")
     return fitz.Pixmap(buf.getvalue())
 
 
-def _trim_image_whitespace(pix: fitz.Pixmap, *, white_level: int = 252, pad: int = 1) -> fitz.Pixmap:
+def _trim_image_whitespace(pix, *, white_level: int = 252, pad: int = 1):
     """Crop near-pure-white margins on raster screenshots."""
     img = _pixmap_to_pil(pix)
     px = img.load()
@@ -97,11 +107,12 @@ def _trim_image_whitespace(pix: fitz.Pixmap, *, white_level: int = 252, pad: int
     return _pil_to_pixmap(cropped)
 
 
-def _invoice_content_clip(page: fitz.Page, pad: float = 2.0) -> fitz.Rect:
+def _invoice_content_clip(page, pad: float = 2.0):
     """
     Union of drawings / images / text on an invoice PDF page.
     Skips near-full-page background fills so empty margins can be clipped away.
     """
+    fitz = _fitz()
     page_rect = fitz.Rect(page.rect)
     page_area = max(page_rect.get_area(), 1.0)
     rects: list[fitz.Rect] = []
@@ -153,8 +164,8 @@ def _fit_size(box_w: float, box_h: float, img_w: float, img_h: float) -> tuple[f
 
 
 def _pair_same_height(
-    order_pix: fitz.Pixmap,
-    pay_pix: fitz.Pixmap,
+    order_pix,
+    pay_pix,
     *,
     max_w: float,
     max_h: float,
@@ -174,13 +185,14 @@ def _pair_same_height(
 
 
 def append_entry_page(
-    doc: fitz.Document,
+    doc,
     *,
     invoice_rel: str,
     order_rel: str,
     payment_rel: str,
 ) -> None:
     """Append one A4 reimbursement page to an existing document."""
+    fitz = _fitz()
     invoice_path = resolve_stored(invoice_rel)
     order_path = resolve_stored(order_rel)
     payment_path = resolve_stored(payment_rel)
@@ -252,6 +264,7 @@ def compose_entry_pdf(
     payment_rel: str,
 ) -> Path:
     ensure_dirs()
+    fitz = _fitz()
     doc = fitz.open()
     append_entry_page(
         doc,
@@ -278,6 +291,7 @@ def compose_batch_pdf(
     if not pages:
         raise ComposeError("no pages to compose")
     ensure_dirs()
+    fitz = _fitz()
     doc = fitz.open()
     for i, spec in enumerate(pages):
         try:

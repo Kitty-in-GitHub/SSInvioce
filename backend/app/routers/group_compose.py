@@ -8,7 +8,6 @@ from fastapi.responses import FileResponse
 
 from ..db import get_conn
 from ..logging_config import get_logger
-from ..services.layout import ComposeError, compose_batch_pdf
 
 router = APIRouter(prefix="/api/groups", tags=["groups-compose"])
 log = get_logger("groups")
@@ -71,6 +70,8 @@ def compose_group(group_id: int):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     gname = _safe_filename(group_name)
     out_name = f"group_{group_id}_{len(pages)}entries_{stamp}.pdf"
+    from ..services.layout import ComposeError, compose_batch_pdf
+
     try:
         out = compose_batch_pdf(pages, out_name=out_name)
     except ComposeError as exc:

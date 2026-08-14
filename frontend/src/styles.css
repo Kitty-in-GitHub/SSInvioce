@@ -723,6 +723,11 @@ button, input, select, textarea { font: inherit; }
   display: flex;
   gap: 0.5rem;
 }
+.list-toolbar-select {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
 .check-line {
   display: inline-flex;
   align-items: center;
@@ -762,6 +767,23 @@ button, input, select, textarea { font: inherit; }
   gap: 0.35rem;
   flex: 1 1 240px;
   min-width: 0;
+}
+.group-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+  cursor: pointer;
+}
+.group-check input {
+  width: 1.05rem;
+  height: 1.05rem;
+  cursor: pointer;
+}
+.group-check input:disabled {
+  cursor: not-allowed;
 }
 .group-collapse-btn {
   display: inline-flex;
@@ -928,21 +950,26 @@ a.link-btn {
   display: grid;
   gap: 0.2rem;
 }
+.entry-title-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.entry-title-row .chip {
+  flex: none;
+}
 .entry-title {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--ink);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .entry-title:hover { color: var(--accent); }
-.entry-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.3rem;
-}
 .entry-note {
   color: var(--muted);
   font-size: 0.8rem;

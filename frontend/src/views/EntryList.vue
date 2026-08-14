@@ -17,14 +17,21 @@
     <template v-else>
       <div class="list-board">
         <div v-if="entries.length" class="list-toolbar">
-          <label class="check-line">
-            <input type="checkbox" :checked="allSelectableChecked" @change="toggleSelectAll" />
-            全选齐套
-          </label>
+          <div class="list-toolbar-select">
+            <button class="btn btn-sm" type="button" :disabled="!entries.length" @click="toggleSelectAll">
+              {{ allEntriesChecked ? '取消全选' : '全选' }}
+            </button>
+            <button class="btn btn-sm" type="button" :disabled="!selectableEntries.length" @click="selectAllComplete">
+              全选齐套
+            </button>
+          </div>
           <span class="meta">已选 {{ selectedIds.length }} · 共 {{ entries.length }} 条</span>
           <div class="list-toolbar-actions">
-            <button class="btn btn-primary btn-sm" :disabled="!selectedIds.length || batchComposing" @click="composeSelected">
-              {{ batchComposing ? '合并拼版中…' : `合并导出（${selectedIds.length}）` }}
+            <button class="btn btn-primary btn-sm" :disabled="!selectedCompleteCount || batchComposing || batchDeleting" @click="composeSelected">
+              {{ batchComposing ? '合并拼版中…' : `合并导出（${selectedCompleteCount}）` }}
+            </button>
+            <button class="btn btn-danger btn-sm" :disabled="!selectedIds.length || batchComposing || batchDeleting" @click="removeSelected">
+              {{ batchDeleting ? '删除中…' : `删除选中（${selectedIds.length}）` }}
             </button>
           </div>
         </div>
@@ -38,6 +45,15 @@
           >
             <header class="group-head">
               <div class="group-head-lead">
+                <label class="group-check" :title="groupSelectTitle(section)" @click.stop>
+                  <input
+                    type="checkbox"
+                    :checked="groupSelectState(section) === 'all'"
+                    :indeterminate="groupSelectState(section) === 'some'"
+                    :disabled="!section.entries.length"
+                    @change="toggleGroupSelect(section)"
+                  />
+                </label>
                 <button
                   type="button"
                   class="group-collapse-btn"
@@ -144,22 +160,25 @@
                   <label class="entry-check">
                     <input
                       type="checkbox"
-                      :disabled="!e.completeness.complete"
                       :checked="selectedIds.includes(e.id)"
                       @change="toggleSelect(e)"
                     />
                   </label>
                   <div class="entry-main">
-                    <router-link class="entry-title" :to="`/entries/${e.id}`">{{ e.title }}</router-link>
-                    <div class="entry-meta">
-                      <span v-if="e.note" class="entry-note">{{ e.note }}</span>
+                    <div class="entry-title-row">
+                      <router-link class="entry-title" :to="`/entries/${e.id}`">{{ e.title }}</router-link>
                       <span class="chip" :class="e.completeness.complete ? 'chip-ok' : 'chip-warn'">
                         {{ e.completeness.complete ? '齐套' : `缺：${missingLabel(e.completeness.missing)}` }}
                       </span>
-                      <span class="chip" :class="amountChipClass(e.amount_source)">
+                      <span
+                        class="chip"
+                        :class="amountChipClass(e.amount_source)"
+                        :title="amountSourceHint(e.amount_source)"
+                      >
                         {{ e.amount_source === 'manual' ? '手改' : e.amount_source === 'auto' ? '自动' : '无金额' }}
                       </span>
                     </div>
+                    <div v-if="e.note" class="entry-note">{{ e.note }}</div>
                   </div>
                   <div class="amount-edit">
                     <span class="amount-prefix" aria-hidden="true">¥</span>
@@ -240,6 +259,7 @@ const composingId = ref(null)
 const composingGroupId = ref(null)
 const selectedIds = ref([])
 const batchComposing = ref(false)
+const batchDeleting = ref(false)
 
 const draftingEntryKey = ref(null)
 const draftEntryTitle = ref('')
@@ -280,6 +300,12 @@ function amountChipClass(source) {
   return 'chip-muted'
 }
 
+function amountSourceHint(source) {
+  if (source === 'manual') return '金额已手改，不再随识别结果覆盖'
+  if (source === 'auto') return '金额来自发票/支付记录自动识别'
+  return '尚未识别到金额'
+}
+
 function toggleCollapse(key) {
   const next = new Set(collapsedKeys.value)
   if (next.has(key)) next.delete(key)
@@ -298,8 +324,11 @@ function focusRef(elRef) {
 }
 
 const selectableEntries = computed(() => entries.value.filter((e) => e.completeness.complete))
-const allSelectableChecked = computed(
-  () => selectableEntries.value.length > 0 && selectableEntries.value.every((e) => selectedIds.value.includes(e.id)),
+const allEntriesChecked = computed(
+  () => entries.value.length > 0 && entries.value.every((e) => selectedIds.value.includes(e.id)),
+)
+const selectedCompleteCount = computed(
+  () => selectedIds.value.filter((id) => selectableEntries.value.some((e) => e.id === id)).length,
 )
 
 const sections = computed(() => {
@@ -338,7 +367,7 @@ async function load() {
   error.value = ''
   try {
     ;[entries.value, groups.value] = await Promise.all([api.listEntries(), api.listGroups()])
-    const valid = new Set(selectableEntries.value.map((e) => e.id))
+    const valid = new Set(entries.value.map((e) => e.id))
     selectedIds.value = selectedIds.value.filter((id) => valid.has(id))
   } catch (e) {
     error.value = e.message
@@ -352,7 +381,6 @@ function openUpload() {
 }
 
 function toggleSelect(e) {
-  if (!e.completeness.complete) return
   if (selectedIds.value.includes(e.id)) {
     selectedIds.value = selectedIds.value.filter((id) => id !== e.id)
   } else {
@@ -360,8 +388,42 @@ function toggleSelect(e) {
   }
 }
 
-function toggleSelectAll(ev) {
-  selectedIds.value = ev.target.checked ? selectableEntries.value.map((e) => e.id) : []
+function toggleSelectAll() {
+  selectedIds.value = allEntriesChecked.value ? [] : entries.value.map((e) => e.id)
+}
+
+function groupSelectState(section) {
+  const total = section.entries.length
+  if (!total) return 'none'
+  const n = section.entries.filter((e) => selectedIds.value.includes(e.id)).length
+  if (n === 0) return 'none'
+  if (n === total) return 'all'
+  return 'some'
+}
+
+function groupSelectTitle(section) {
+  const state = groupSelectState(section)
+  if (!section.entries.length) return '本组暂无条目'
+  if (state === 'all') return '取消选中本组'
+  if (state === 'some') return '本组部分已选，点击全选本组'
+  return '选中本组全部条目'
+}
+
+function toggleGroupSelect(section) {
+  const ids = section.entries.map((e) => e.id)
+  if (!ids.length) return
+  const set = new Set(selectedIds.value)
+  if (groupSelectState(section) === 'all') {
+    for (const id of ids) set.delete(id)
+  } else {
+    for (const id of ids) set.add(id)
+  }
+  selectedIds.value = [...set]
+}
+
+function selectAllComplete() {
+  selectedIds.value = selectableEntries.value.map((e) => e.id)
+  hint.value = `已选中 ${selectedIds.value.length} 条齐套条目`
 }
 
 function selectGroupComplete(section) {
@@ -553,12 +615,48 @@ async function compose(e) {
   }
 }
 
+async function removeSelected() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const titles = entries.value.filter((e) => ids.includes(e.id)).map((e) => e.title)
+  const preview = titles.slice(0, 5).join('、')
+  const extra = titles.length > 5 ? ` 等 ${titles.length} 条` : ''
+  const ok = await askConfirm({
+    title: '删除选中条目',
+    message: `确定删除 ${ids.length} 条：${preview}${extra}？材料文件也会一并删除，此操作不可恢复。`,
+    confirmText: '删除选中',
+    cancelText: '取消',
+    danger: true,
+  })
+  if (!ok) return
+  batchDeleting.value = true
+  error.value = ''
+  hint.value = ''
+  try {
+    for (const id of ids) {
+      await api.deleteEntry(id)
+    }
+    selectedIds.value = []
+    await load()
+    hint.value = `已删除 ${ids.length} 条`
+  } catch (err) {
+    error.value = err.message
+    await load()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 async function composeSelected() {
-  if (!selectedIds.value.length) return
+  const ids = selectedIds.value.filter((id) => selectableEntries.value.some((e) => e.id === id))
+  if (!ids.length) {
+    error.value = '所选条目均不齐套，无法合并导出'
+    return
+  }
   batchComposing.value = true
   error.value = ''
   try {
-    const { blob, filename } = await api.composeBatch(selectedIds.value)
+    const { blob, filename } = await api.composeBatch(ids)
     downloadBlob(blob, filename)
   } catch (err) {
     error.value = err.message

@@ -20,7 +20,7 @@ from ..services.cluster import cluster_features
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
 from ..services.features import FileFeatures, extract_features, normalize_invoice_digits
 from ..services.ocr import ocr_available
-from ..services.storage import delete_file, move_inbox_to_entry, probe_image_size, resolve_stored, store_upload
+from ..services.storage import delete_file, probe_image_size, resolve_stored, store_upload
 
 router = APIRouter(prefix="/api/classify", tags=["classify"])
 log = get_logger("classify")
@@ -352,8 +352,6 @@ def classify_recluster(body: ReclusterRequest | None = None):
 
 def _insert_material(conn, *, entry_id: int | None, mat_type: MaterialType, staged: dict) -> int:
     stored_path = staged["stored_path"]
-    if entry_id is not None:
-        stored_path = move_inbox_to_entry(stored_path, entry_id)
     ts = now_iso()
     feat = staged.get("features")
     invoice_number = staged.get("invoice_number")
@@ -394,11 +392,14 @@ def _insert_material(conn, *, entry_id: int | None, mat_type: MaterialType, stag
     if entry_id is not None:
         conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, entry_id))
         if mat_type == "invoice":
+            feat_amount = feat.amount if isinstance(feat, FileFeatures) else None
             apply_auto_amount(
                 conn,
                 entry_id,
                 stored_path=stored_path,
                 original_name=staged["original_name"],
+                parsed_amount=feat_amount,
+                read_pdf=False,
             )
     return material_id
 

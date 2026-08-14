@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-import pymupdf as fitz
-
 from ..logging_config import get_logger
 from ..models import MaterialType
 from .amount import parse_amount_from_filename, parse_amount_from_pdf_text
@@ -273,6 +271,8 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
     suffix = abs_path.suffix.lower()
     if suffix == ".pdf":
         try:
+            import pymupdf as fitz
+
             doc = fitz.open(abs_path)
             try:
                 pages = []

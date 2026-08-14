@@ -14,7 +14,7 @@ from ..services.classify import classify_file
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
 from ..services.features import extract_features, normalize_invoice_digits
 from ..services.serializers import material_to_out
-from ..services.storage import delete_file, move_inbox_to_entry, probe_image_size, resolve_stored, store_upload
+from ..services.storage import delete_file, probe_image_size, resolve_stored, store_upload
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 log = get_logger("materials")
@@ -105,6 +105,8 @@ async def upload_material(
                     entry_id,
                     stored_path=rel,
                     original_name=file.filename,
+                    parsed_amount=feat.amount,
+                    read_pdf=False,
                 )
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (mid,)).fetchone()
         log.info(
@@ -137,13 +139,12 @@ def update_material(material_id: int, body: MaterialAssign):
                 raise HTTPException(status_code=404, detail="entry not found")
 
         new_path = data["stored_path"]
-        if new_entry is not None and data["entry_id"] != new_entry:
-            new_path = move_inbox_to_entry(data["stored_path"], new_entry)
 
         inv_no = data.get("invoice_number")
         inv_code = data.get("invoice_code")
         digest = data.get("content_sha256")
         dup_warn = None
+        feat_amount = None
         if new_type == "invoice" and not inv_no:
             feat = extract_features(
                 temp_id="",
@@ -153,6 +154,7 @@ def update_material(material_id: int, body: MaterialAssign):
             inv_no = feat.invoice_number
             inv_code = feat.invoice_code or inv_code
             digest = feat.content_sha256 or digest
+            feat_amount = feat.amount
         if new_type != "invoice":
             inv_no = None
             inv_code = None
@@ -186,6 +188,8 @@ def update_material(material_id: int, body: MaterialAssign):
                     new_entry,
                     stored_path=new_path,
                     original_name=data["original_name"],
+                    parsed_amount=feat_amount,
+                    read_pdf=False,
                 )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         return material_to_out(dict(updated), duplicate_warning=dup_warn)
@@ -201,6 +205,7 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
         inv_code = data.get("invoice_code")
         digest = data.get("content_sha256")
         dup_warn = None
+        feat_amount = None
         if body.type == "invoice" and not inv_no:
             feat = extract_features(
                 temp_id="",
@@ -210,6 +215,7 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
             inv_no = feat.invoice_number
             inv_code = feat.invoice_code or inv_code
             digest = feat.content_sha256 or digest
+            feat_amount = feat.amount
         if body.type != "invoice":
             inv_no = None
             inv_code = None
@@ -242,6 +248,8 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
                     row["entry_id"],
                     stored_path=row["stored_path"],
                     original_name=row["original_name"],
+                    parsed_amount=feat_amount,
+                    read_pdf=False,
                 )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         return material_to_out(dict(updated), duplicate_warning=dup_warn)

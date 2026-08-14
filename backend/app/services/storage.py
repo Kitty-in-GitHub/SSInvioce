@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from pathlib import Path
@@ -49,20 +50,76 @@ def probe_image_size(path: Path) -> tuple[int | None, int | None]:
         return None, None
 
 
+def _recycle_windows(paths: list[Path]) -> bool:
+    """Send files to Recycle Bin (Explorer-style). Returns True if Shell accepted the op."""
+    import ctypes
+    from ctypes import wintypes
+
+    existing = [p.resolve() for p in paths if p.exists() and p.is_file()]
+    if not existing:
+        return True
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", wintypes.UINT),
+            ("pFrom", ctypes.c_void_p),
+            ("pTo", ctypes.c_void_p),
+            ("fFlags", wintypes.USHORT),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", wintypes.LPVOID),
+            ("lpszProgressTitle", wintypes.LPCWSTR),
+        ]
+
+    FO_DELETE = 3
+    FOF_SILENT = 0x0004
+    FOF_NOCONFIRMATION = 0x0010
+    FOF_ALLOWUNDO = 0x0040
+    FOF_NOERRORUI = 0x0400
+    flags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI
+
+    joined = "\0".join(str(p) for p in existing) + "\0\0"
+    buf = ctypes.create_unicode_buffer(joined)
+    op = SHFILEOPSTRUCTW()
+    op.hwnd = None
+    op.wFunc = FO_DELETE
+    op.pFrom = ctypes.addressof(buf)
+    op.pTo = None
+    op.fFlags = flags
+    op.fAnyOperationsAborted = False
+    op.hNameMappings = None
+    op.lpszProgressTitle = None
+    rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    return rc == 0 and not op.fAnyOperationsAborted
+
+
+def delete_stored_files(rel_paths: list[str]) -> None:
+    """Remove stored uploads. On Windows, prefer Recycle Bin to avoid 360 ransomware heuristics."""
+    abs_paths: list[Path] = []
+    for rel in rel_paths:
+        if not rel:
+            continue
+        try:
+            abs_paths.append(resolve_stored(rel))
+        except Exception:
+            continue
+    if not abs_paths:
+        return
+    recycled = False
+    if os.name == "nt":
+        try:
+            recycled = _recycle_windows(abs_paths)
+        except Exception:
+            recycled = False
+    if recycled:
+        return
+    for path in abs_paths:
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+
+
 def delete_file(rel_path: str) -> None:
-    try:
-        path = resolve_stored(rel_path)
-        if path.exists():
-            path.unlink()
-    except Exception:
-        pass
-
-
-def move_inbox_to_entry(rel_path: str, entry_id: int) -> str:
-    src = resolve_stored(rel_path)
-    dest_dir = UPLOADS_DIR / str(entry_id)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / src.name
-    if src.resolve() != dest.resolve():
-        src.replace(dest)
-    return dest.relative_to(UPLOADS_DIR).as_posix()
+    delete_stored_files([rel_path])

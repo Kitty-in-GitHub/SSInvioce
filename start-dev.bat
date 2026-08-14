@@ -20,12 +20,26 @@ if not exist "%~dp0frontend\node_modules\" (
   popd
 )
 
+call "%~dp0stop-dev.bat"
+
 echo Starting API on http://127.0.0.1:%API_PORT%
-start "StarInvoice-API" "%VENV_PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %API_PORT% --reload --reload-dir backend --log-level info
+echo Close the "StarInvoice-API" window to stop, or run stop-dev.bat if it will not close.
+start "StarInvoice-API" cmd /c ""%VENV_PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %API_PORT% --reload --reload-dir backend --log-level info --no-use-colors"
 
 echo Waiting for API health...
-powershell -NoProfile -Command "for($i=0;$i -lt 30;$i++){ try { $r=Invoke-RestMethod http://127.0.0.1:%API_PORT%/api/health; if($r.service -eq 'star-invoice-helper'){ Write-Host 'API OK'; exit 0 } } catch {} Start-Sleep -Milliseconds 400 }; Write-Host 'API health check failed'; exit 1"
-if errorlevel 1 (
+set "HEALTH_OK="
+for /L %%i in (1,1,30) do (
+  if not defined HEALTH_OK (
+    "%VENV_PY%" -c "import json,urllib.request,sys; d=json.loads(urllib.request.urlopen('http://127.0.0.1:%API_PORT%/api/health', timeout=1).read().decode()); sys.exit(0 if d.get('service')=='star-invoice-helper' else 1)" 2>nul
+    if not errorlevel 1 (
+      echo API OK
+      set "HEALTH_OK=1"
+    ) else (
+      "%VENV_PY%" -c "import time; time.sleep(0.4)"
+    )
+  )
+)
+if not defined HEALTH_OK (
   echo [error] API did not become ready on port %API_PORT%. See data\logs\app.log
   pause
   exit /b 1

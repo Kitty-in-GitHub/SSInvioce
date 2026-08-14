@@ -4,8 +4,6 @@ import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-import pymupdf as fitz
-
 from ..logging_config import get_logger
 from .storage import resolve_stored
 
@@ -141,23 +139,26 @@ def parse_amount_from_pdf_text(text: str) -> Decimal | None:
     return None
 
 
-def extract_invoice_amount(*, stored_path: str, original_name: str = "") -> Decimal | None:
+def extract_invoice_amount(*, stored_path: str, original_name: str = "", read_pdf: bool = True) -> Decimal | None:
     """Heuristic amount from invoice PDF text and/or filename."""
     name = original_name or Path(stored_path).name
     from_name = parse_amount_from_filename(name)
     text = ""
-    try:
-        path = resolve_stored(stored_path)
-        if path.suffix.lower() == ".pdf" and path.exists():
-            doc = fitz.open(path)
-            try:
-                text = doc[0].get_text() or ""
-            finally:
-                doc.close()
-    except Exception:
-        log.exception("failed reading invoice text path=%s", stored_path)
+    if read_pdf:
+        try:
+            path = resolve_stored(stored_path)
+            if path.suffix.lower() == ".pdf" and path.exists():
+                import pymupdf as fitz
 
-    from_pdf = parse_amount_from_pdf_text(text)
+                doc = fitz.open(path)
+                try:
+                    text = doc[0].get_text() or ""
+                finally:
+                    doc.close()
+        except Exception:
+            log.exception("failed reading invoice text path=%s", stored_path)
+
+    from_pdf = parse_amount_from_pdf_text(text) if text else None
     # Prefer explicit filename money token when present
     chosen = from_name or from_pdf
     log.info(
@@ -170,7 +171,15 @@ def extract_invoice_amount(*, stored_path: str, original_name: str = "") -> Deci
     return chosen
 
 
-def apply_auto_amount(conn, entry_id: int, *, stored_path: str, original_name: str) -> None:
+def apply_auto_amount(
+    conn,
+    entry_id: int,
+    *,
+    stored_path: str,
+    original_name: str,
+    parsed_amount: float | None = None,
+    read_pdf: bool = True,
+) -> None:
     """Fill amount from invoice when entry is not manually locked."""
     from ..db import now_iso
 
@@ -182,10 +191,17 @@ def apply_auto_amount(conn, entry_id: int, *, stored_path: str, original_name: s
         return
     if (row["amount_source"] or "empty") == "manual":
         return
-    parsed = extract_invoice_amount(stored_path=stored_path, original_name=original_name)
-    if parsed is None:
-        return
-    val = float(parsed)
+    if parsed_amount is not None:
+        val = float(parsed_amount)
+    else:
+        parsed = extract_invoice_amount(
+            stored_path=stored_path,
+            original_name=original_name,
+            read_pdf=read_pdf,
+        )
+        if parsed is None:
+            return
+        val = float(parsed)
     conn.execute(
         """
         UPDATE entries

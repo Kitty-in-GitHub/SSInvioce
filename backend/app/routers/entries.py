@@ -7,7 +7,7 @@ from ..logging_config import get_logger
 from ..models import EntryCreate, EntryOut, EntryUpdate, ReparseAmountRequest
 from ..services.amount import apply_auto_amount, extract_invoice_amount
 from ..services.serializers import completeness_from_types, material_to_out
-from ..services.storage import delete_file
+from ..services.storage import delete_stored_files
 router = APIRouter(prefix="/api/entries", tags=["entries"])
 log = get_logger("entries")
 
@@ -195,7 +195,6 @@ def delete_entry(entry_id: int):
         cur = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="entry not found")
-    for m in mats:
-        delete_file(m["stored_path"])
+    delete_stored_files([m["stored_path"] for m in mats])
     log.info("deleted entry id=%s materials=%s", entry_id, len(mats))
     return {"ok": True}

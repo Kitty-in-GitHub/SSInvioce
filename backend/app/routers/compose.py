@@ -8,7 +8,6 @@ from fastapi.responses import FileResponse
 from ..db import get_conn
 from ..logging_config import get_logger
 from ..models import ComposeBatchRequest
-from ..services.layout import ComposeError, compose_batch_pdf, compose_entry_pdf
 
 router = APIRouter(prefix="/api/entries", tags=["compose"])
 log = get_logger("compose")
@@ -73,6 +72,8 @@ def compose_batch(body: ComposeBatchRequest):
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_name = f"batch_{len(pages)}entries_{stamp}.pdf"
+    from ..services.layout import ComposeError, compose_batch_pdf
+
     try:
         out = compose_batch_pdf(pages, out_name=out_name)
     except ComposeError as exc:
@@ -96,6 +97,8 @@ def compose_entry(entry_id: int):
         by_type = _materials_by_type(conn, entry_id)
 
     _require_complete(by_type, entry_id, entry["title"])
+
+    from ..services.layout import ComposeError, compose_entry_pdf
 
     try:
         out = compose_entry_pdf(

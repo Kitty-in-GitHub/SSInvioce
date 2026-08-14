@@ -30,7 +30,7 @@ echo  Close this window to stop.
 echo.
 
 start "" "http://%API_HOST%:%API_PORT%"
-"%PY%" -m uvicorn backend.app.main:app --host %API_HOST% --port %API_PORT% --log-level info
+"%PY%" -m uvicorn backend.app.main:app --host %API_HOST% --port %API_PORT% --log-level info --no-use-colors
 set "EC=%ERRORLEVEL%"
 if not "%EC%"=="0" (
   echo.
