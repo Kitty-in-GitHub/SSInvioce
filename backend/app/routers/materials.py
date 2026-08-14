@@ -12,8 +12,9 @@ from ..models import MaterialAssign, MaterialOut, MaterialType, MaterialTypeUpda
 from ..services.amount import apply_auto_amount
 from ..services.classify import classify_file
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
-from ..services.features import extract_features, normalize_invoice_digits
+from ..services.features import extract_features, file_sha256, normalize_invoice_digits
 from ..services.serializers import material_to_out
+from ..services.settings_store import invoice_slot_id
 from ..services.storage import delete_file, probe_image_size, resolve_stored, store_upload
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
@@ -65,24 +66,31 @@ async def upload_material(
     if suffix != ".pdf":
         width, height = probe_image_size(abs_path)
 
-    feat = extract_features(
-        temp_id="",
-        original_name=file.filename,
-        stored_path=rel,
-        abs_path=abs_path,
-        width=width,
-        height=height,
-    )
-    mat_type = type or feat.suggested_type or classify_file(file.filename, width=width, height=height)
+    inv_id = invoice_slot_id()
+    # Known non-invoice type (e.g. detail-page slot upload): skip OCR, only hash the file.
+    need_features = type is None or type == inv_id or type == "unknown"
+    feat = None
+    if need_features:
+        feat = extract_features(
+            temp_id="",
+            original_name=file.filename,
+            stored_path=rel,
+            abs_path=abs_path,
+            width=width,
+            height=height,
+        )
+        mat_type = type or feat.suggested_type or classify_file(file.filename, width=width, height=height)
+    else:
+        mat_type = type
     mime = _guess_mime(file.filename, file.content_type)
     ts = now_iso()
-    inv_no = normalize_invoice_digits(feat.invoice_number) if mat_type == "invoice" else None
-    inv_code = normalize_invoice_digits(feat.invoice_code) if mat_type == "invoice" else None
-    digest = feat.content_sha256
+    inv_no = normalize_invoice_digits(feat.invoice_number) if feat and mat_type == inv_id else None
+    inv_code = normalize_invoice_digits(feat.invoice_code) if feat and mat_type == inv_id else None
+    digest = feat.content_sha256 if feat else file_sha256(abs_path)
 
     with get_conn() as conn:
         dup_warn = None
-        if mat_type == "invoice" and inv_no:
+        if mat_type == inv_id and inv_no:
             hit = find_invoice_duplicate(conn, inv_no)
             if hit:
                 dup_warn = warning_from_hit(reason="invoice_number", hit=hit)
@@ -99,13 +107,13 @@ async def upload_material(
         mid = int(cur.lastrowid)
         if entry_id is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, entry_id))
-            if mat_type == "invoice":
+            if mat_type == inv_id:
                 apply_auto_amount(
                     conn,
                     entry_id,
                     stored_path=rel,
                     original_name=file.filename,
-                    parsed_amount=feat.amount,
+                    parsed_amount=feat.amount if feat else None,
                     read_pdf=False,
                 )
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (mid,)).fetchone()
@@ -145,7 +153,7 @@ def update_material(material_id: int, body: MaterialAssign):
         digest = data.get("content_sha256")
         dup_warn = None
         feat_amount = None
-        if new_type == "invoice" and not inv_no:
+        if new_type == invoice_slot_id() and not inv_no:
             feat = extract_features(
                 temp_id="",
                 original_name=data["original_name"],
@@ -155,10 +163,10 @@ def update_material(material_id: int, body: MaterialAssign):
             inv_code = feat.invoice_code or inv_code
             digest = feat.content_sha256 or digest
             feat_amount = feat.amount
-        if new_type != "invoice":
+        if new_type != invoice_slot_id():
             inv_no = None
             inv_code = None
-        if new_type == "invoice" and inv_no:
+        if new_type == invoice_slot_id() and inv_no:
             hit = find_invoice_duplicate(conn, inv_no, exclude_material_ids={material_id})
             if hit:
                 dup_warn = warning_from_hit(reason="invoice_number", hit=hit)
@@ -174,15 +182,15 @@ def update_material(material_id: int, body: MaterialAssign):
                 new_entry,
                 new_type,
                 new_path,
-                normalize_invoice_digits(inv_no) if new_type == "invoice" else None,
-                normalize_invoice_digits(inv_code) if new_type == "invoice" else None,
+                normalize_invoice_digits(inv_no) if new_type == invoice_slot_id() else None,
+                normalize_invoice_digits(inv_code) if new_type == invoice_slot_id() else None,
                 digest,
                 material_id,
             ),
         )
         if new_entry is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (now_iso(), new_entry))
-            if new_type == "invoice":
+            if new_type == invoice_slot_id():
                 apply_auto_amount(
                     conn,
                     new_entry,
@@ -206,7 +214,7 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
         digest = data.get("content_sha256")
         dup_warn = None
         feat_amount = None
-        if body.type == "invoice" and not inv_no:
+        if body.type == invoice_slot_id() and not inv_no:
             feat = extract_features(
                 temp_id="",
                 original_name=data["original_name"],
@@ -216,10 +224,10 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
             inv_code = feat.invoice_code or inv_code
             digest = feat.content_sha256 or digest
             feat_amount = feat.amount
-        if body.type != "invoice":
+        if body.type != invoice_slot_id():
             inv_no = None
             inv_code = None
-        if body.type == "invoice" and inv_no:
+        if body.type == invoice_slot_id() and inv_no:
             hit = find_invoice_duplicate(conn, inv_no, exclude_material_ids={material_id})
             if hit:
                 dup_warn = warning_from_hit(reason="invoice_number", hit=hit)
@@ -231,8 +239,8 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
             """,
             (
                 body.type,
-                normalize_invoice_digits(inv_no) if body.type == "invoice" else None,
-                normalize_invoice_digits(inv_code) if body.type == "invoice" else None,
+                normalize_invoice_digits(inv_no) if body.type == invoice_slot_id() else None,
+                normalize_invoice_digits(inv_code) if body.type == invoice_slot_id() else None,
                 digest,
                 material_id,
             ),
@@ -242,7 +250,7 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
                 "UPDATE entries SET updated_at = ? WHERE id = ?",
                 (now_iso(), row["entry_id"]),
             )
-            if body.type == "invoice":
+            if body.type == invoice_slot_id():
                 apply_auto_amount(
                     conn,
                     row["entry_id"],

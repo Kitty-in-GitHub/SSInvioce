@@ -38,9 +38,7 @@
             <td>{{ m.original_name }}</td>
             <td>
               <select :value="m.type" @change="changeType(m, $event.target.value)">
-                <option value="invoice">发票</option>
-                <option value="order">订单截图</option>
-                <option value="payment">支付记录</option>
+                <option v-for="s in slotDefs" :key="s.id" :value="s.id">{{ s.label }}</option>
                 <option value="unknown">未分类</option>
               </select>
             </td>
@@ -64,10 +62,12 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { api, isImageMaterial, isPdfMaterial } from '../api/client'
+import { useSlots } from '../composables/useSlots'
 import MaterialPreview from '../components/MaterialPreview.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 
 const { askConfirm } = useConfirmDialog()
+const { slots: slotDefs } = useSlots()
 const items = ref([])
 const entries = ref([])
 const loading = ref(true)

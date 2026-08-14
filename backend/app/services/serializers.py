@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import Completeness, DuplicateWarning, MaterialOut
+from .settings_store import invoice_slot_id, required_slot_ids
 
 
 def material_url(material_id: int) -> str:
@@ -10,21 +11,14 @@ def material_url(material_id: int) -> str:
 
 
 def completeness_from_types(types: set[str]) -> Completeness:
-    has_invoice = "invoice" in types
-    has_order = "order" in types
-    has_payment = "payment" in types
-    missing: list[str] = []
-    if not has_invoice:
-        missing.append("invoice")
-    if not has_order:
-        missing.append("order")
-    if not has_payment:
-        missing.append("payment")
+    required = required_slot_ids()
+    missing = [sid for sid in required if sid not in types]
+    inv = invoice_slot_id()
     return Completeness(
         complete=not missing,
-        has_invoice=has_invoice,
-        has_order=has_order,
-        has_payment=has_payment,
+        has_invoice=inv in types,
+        has_order="order" in types,
+        has_payment="payment" in types,
         missing=missing,
     )
 

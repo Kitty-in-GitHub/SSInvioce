@@ -85,9 +85,7 @@
                   @click.stop
                   @change="onItemType(itemInCluster(c, slot), $event)"
                 >
-                  <option value="invoice">发票</option>
-                  <option value="order">订单截图</option>
-                  <option value="payment">支付记录</option>
+                  <option v-for="s in slotDefs" :key="s.id" :value="s.id">{{ s.label }}</option>
                   <option value="unknown">未分类</option>
                 </select>
               </div>
@@ -132,9 +130,7 @@
             </td>
             <td>
               <select v-model="item.type">
-                <option value="invoice">发票</option>
-                <option value="order">订单截图</option>
-                <option value="payment">支付记录</option>
+                <option v-for="s in slotDefs" :key="'u-'+s.id" :value="s.id">{{ s.label }}</option>
                 <option value="unknown">未分类</option>
               </select>
             </td>
@@ -226,7 +222,8 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { TYPE_LABELS, api } from '../api/client'
+import { api } from '../api/client'
+import { useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import InvoiceDupCompare from './InvoiceDupCompare.vue'
 import MaterialPreview from './MaterialPreview.vue'
@@ -251,7 +248,9 @@ const slotPreview = ref(null)
 /** invoice_number / peer keys the user chose to keep both */
 const keepBothKeys = ref(new Set())
 
-const slotTypes = ['invoice', 'order', 'payment']
+const { slots: slotDefs, slotLabels, invoiceId } = useSlots()
+const slotTypes = computed(() => (slotDefs.value.length ? slotDefs.value.map((s) => s.id) : ['invoice', 'order', 'payment']))
+const TYPE_LABELS = computed(() => ({ unknown: '未分类', ...slotLabels.value }))
 
 function isPdfName(name) {
   return /\.pdf$/i.test(name || '')
@@ -300,7 +299,7 @@ function formatDupWarn(w) {
 }
 
 function invoiceItemInCluster(cluster) {
-  return itemInCluster(cluster, 'invoice')
+  return itemInCluster(cluster, invoiceId.value)
 }
 
 function itemPreviewUrl(item) {

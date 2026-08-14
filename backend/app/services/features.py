@@ -11,7 +11,7 @@ from ..models import MaterialType
 from .amount import parse_amount_from_filename, parse_amount_from_pdf_text
 from .classify import classify_file
 from .ocr import ocr_available, ocr_image
-from .settings_store import get_classify_keywords
+from .settings_store import invoice_slot_id
 from .storage import resolve_stored
 
 log = get_logger("features")
@@ -105,25 +105,31 @@ class FileFeatures:
 
 def _pick_type_from_text(text: str, filename: str, width: int | None, height: int | None) -> MaterialType:
     compact = re.sub(r"\s+", "", text or "")
-    keywords = get_classify_keywords()
-    scores = {"invoice": 0, "order": 0, "payment": 0}
-    for kind in ("invoice", "order", "payment"):
-        for w in keywords.get(kind, []):
+    from .settings_store import file_kind_for, get_slots, invoice_slot_id
+
+    suffix = Path(filename).suffix.lower()
+    want_kind = "pdf" if suffix == ".pdf" else "image"
+    slots = [s for s in get_slots() if s.get("file_kind") == want_kind]
+    if not slots:
+        slots = get_slots()
+
+    scores = {s["id"]: 0 for s in slots}
+    for slot in slots:
+        for w in slot.get("keywords") or []:
             word = (w or "").strip()
             if not word:
                 continue
             if word in compact:
-                scores[kind] += 2
+                scores[slot["id"]] += 2
             elif word in filename or word.lower() in filename.lower():
-                scores[kind] += 1
+                scores[slot["id"]] += 1
 
-    best = max(scores, key=scores.get)
-    if scores[best] > 0:
-        return best  # type: ignore[return-value]
+    best = max(scores, key=scores.get) if scores else None
+    if best and scores[best] > 0:
+        return best
 
-    suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
-        return "invoice"
+        return invoice_slot_id()
     return classify_file(filename, width=width, height=height)
 
 

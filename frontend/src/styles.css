@@ -1425,3 +1425,112 @@ a.link-btn {
   border-radius: 6px;
   background: #eee;
 }
+
+
+.slot-editor {
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+.slot-editor:first-of-type { border-top: none; padding-top: 0; }
+.slot-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+  flex-wrap: wrap;
+}
+.slot-swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.layout-workspace {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 1rem;
+}
+@media (max-width: 900px) {
+  .layout-workspace { grid-template-columns: 1fr; }
+}
+.layout-palette h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin-bottom: 0.35rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px dashed color-mix(in srgb, var(--slot-color) 55%, #fff);
+  background: color-mix(in srgb, var(--slot-color) 12%, #fff);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.palette-item.placed {
+  border-style: solid;
+  background: color-mix(in srgb, var(--slot-color) 28%, #fff);
+  font-weight: 650;
+}
+.palette-dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--slot-color);
+  flex-shrink: 0;
+}
+.layout-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+.layout-board {
+  position: relative;
+  width: min(100%, 420px);
+  aspect-ratio: 210 / 297;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  touch-action: none;
+  user-select: none;
+}
+.layout-region {
+  position: absolute;
+  border: 2px solid #163a7a;
+  border-radius: 4px;
+  box-sizing: border-box;
+  cursor: move;
+  overflow: hidden;
+}
+.layout-region.active { outline: 2px solid rgba(22, 58, 122, 0.35); }
+.layout-region-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 650;
+  padding: 0.2rem 0.35rem;
+  background: rgba(255,255,255,0.75);
+}
+.layout-region-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  border: none;
+  background: rgba(255,255,255,0.85);
+  cursor: pointer;
+  line-height: 1;
+  border-radius: 4px;
+}
+.layout-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  background: rgba(22, 58, 122, 0.85);
+  cursor: nwse-resize;
+  border-radius: 2px 0 0 0;
+}

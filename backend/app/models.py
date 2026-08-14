@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-MaterialType = Literal["invoice", "order", "payment", "unknown"]
+MaterialType = str
 AmountSource = Literal["auto", "manual", "empty"]
 
 

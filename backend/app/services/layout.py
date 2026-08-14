@@ -8,6 +8,7 @@ from PIL import Image
 
 from ..config import EXPORTS_DIR, ensure_dirs
 from ..logging_config import get_logger
+from .settings_store import file_kind_for, get_layout, invoice_slot_id
 from .storage import resolve_stored
 
 # A4 at 72 dpi points
@@ -256,22 +257,59 @@ def append_entry_page(
     )
 
 
+def _region_rect(region: dict):
+    fitz = _fitz()
+    x = float(region["x"]) * A4_WIDTH
+    y = float(region["y"]) * A4_HEIGHT
+    w = float(region["w"]) * A4_WIDTH
+    h = float(region["h"]) * A4_HEIGHT
+    return fitz.Rect(x, y, x + w, y + h)
+
+
+def append_layout_pages(doc, files_by_slot: dict[str, str], layout: dict | None = None) -> None:
+    fitz = _fitz()
+    spec = layout or get_layout()
+    inv_id = invoice_slot_id()
+    pages = spec.get("pages") or []
+    if not pages:
+        raise ComposeError("拼版画板为空")
+    for page_spec in pages:
+        page = doc.new_page(width=A4_WIDTH, height=A4_HEIGHT)
+        for region in page_spec.get("regions") or []:
+            sid = region.get("slot_id")
+            rel = files_by_slot.get(sid) if sid else None
+            if not rel:
+                continue
+            path = resolve_stored(rel)
+            if not path.exists():
+                continue
+            rect = _region_rect(region)
+            kind = file_kind_for(sid)
+            if kind == "pdf" or path.suffix.lower() == ".pdf":
+                src = fitz.open(path)
+                try:
+                    clip = _invoice_content_clip(src[0], pad=1.0) if sid == inv_id else None
+                    if clip is not None:
+                        page.show_pdf_page(rect, src, 0, clip=clip)
+                    else:
+                        page.show_pdf_page(rect, src, 0)
+                finally:
+                    src.close()
+            else:
+                pix = _trim_image_whitespace(_load_image_pixmap(path))
+                page.insert_image(rect, pixmap=pix, keep_proportion=True)
+
+
 def compose_entry_pdf(
     *,
     entry_id: int,
-    invoice_rel: str,
-    order_rel: str,
-    payment_rel: str,
+    files_by_slot: dict[str, str],
+    layout: dict | None = None,
 ) -> Path:
     ensure_dirs()
     fitz = _fitz()
     doc = fitz.open()
-    append_entry_page(
-        doc,
-        invoice_rel=invoice_rel,
-        order_rel=order_rel,
-        payment_rel=payment_rel,
-    )
+    append_layout_pages(doc, files_by_slot, layout)
     out = EXPORTS_DIR / f"entry_{entry_id}.pdf"
     doc.save(out, garbage=4, deflate=True)
     doc.close()
@@ -280,33 +318,26 @@ def compose_entry_pdf(
 
 
 def compose_batch_pdf(
-    pages: list[dict[str, str]],
+    items: list[dict[str, str]],
     *,
     out_name: str = "batch_compose.pdf",
+    layout: dict | None = None,
 ) -> Path:
-    """
-    pages: [{invoice_rel, order_rel, payment_rel}, ...]
-    One A4 page per item, merged into a single PDF.
-    """
-    if not pages:
+    if not items:
         raise ComposeError("no pages to compose")
     ensure_dirs()
     fitz = _fitz()
     doc = fitz.open()
-    for i, spec in enumerate(pages):
+    spec = layout or get_layout()
+    for i, files_by_slot in enumerate(items):
         try:
-            append_entry_page(
-                doc,
-                invoice_rel=spec["invoice_rel"],
-                order_rel=spec["order_rel"],
-                payment_rel=spec["payment_rel"],
-            )
+            append_layout_pages(doc, files_by_slot, spec)
         except ComposeError:
             doc.close()
             raise
-        log.info("batch page %s/%s ok", i + 1, len(pages))
+        log.info("batch item %s/%s ok", i + 1, len(items))
     out = EXPORTS_DIR / out_name
     doc.save(out, garbage=4, deflate=True)
     doc.close()
-    log.info("compose batch pages=%s path=%s size=%s", len(pages), out, out.stat().st_size)
+    log.info("compose batch items=%s path=%s size=%s", len(items), out, out.stat().st_size)
     return out

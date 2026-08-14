@@ -8,25 +8,28 @@ from fastapi.responses import FileResponse
 from ..db import get_conn
 from ..logging_config import get_logger
 from ..models import ComposeBatchRequest
+from ..services.settings_store import get_layout, placed_slot_ids, required_slot_ids
 
 router = APIRouter(prefix="/api/entries", tags=["compose"])
 log = get_logger("compose")
 
 
-def _materials_by_type(conn, entry_id: int) -> dict[str, list]:
+def materials_by_slot(conn, entry_id: int) -> dict[str, str]:
     mats = conn.execute(
-        "SELECT * FROM materials WHERE entry_id = ? ORDER BY id",
+        "SELECT type, stored_path FROM materials WHERE entry_id = ? ORDER BY id",
         (entry_id,),
     ).fetchall()
-    by_type: dict[str, list] = {"invoice": [], "order": [], "payment": []}
+    by_slot: dict[str, str] = {}
     for m in mats:
-        if m["type"] in by_type:
-            by_type[m["type"]].append(m)
-    return by_type
+        sid = m["type"]
+        if sid and sid != "unknown" and sid not in by_slot:
+            by_slot[sid] = m["stored_path"]
+    return by_slot
 
 
-def _require_complete(by_type: dict[str, list], entry_id: int, title: str) -> None:
-    missing = [t for t, items in by_type.items() if not items]
+def require_exportable(files_by_slot: dict[str, str], entry_id: int, title: str) -> None:
+    required = required_slot_ids()
+    missing = [sid for sid in required if sid not in files_by_slot]
     if missing:
         log.warning("compose blocked entry_id=%s title=%r missing=%s", entry_id, title, missing)
         raise HTTPException(
@@ -37,11 +40,20 @@ def _require_complete(by_type: dict[str, list], entry_id: int, title: str) -> No
                 "missing": missing,
             },
         )
+    unplaced = [sid for sid in required if sid not in placed_slot_ids()]
+    if unplaced:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "有必填槽位尚未放入拼版画板，请到设置 → 拼版中摆放后再导出",
+                "entry_id": entry_id,
+                "missing": unplaced,
+            },
+        )
 
 
 @router.post("/compose-batch")
 def compose_batch(body: ComposeBatchRequest):
-    # Preserve request order, drop duplicates
     seen: set[int] = set()
     ordered_ids: list[int] = []
     for eid in body.entry_ids:
@@ -49,7 +61,7 @@ def compose_batch(body: ComposeBatchRequest):
             seen.add(eid)
             ordered_ids.append(eid)
 
-    pages: list[dict[str, str]] = []
+    items: list[dict[str, str]] = []
     titles: list[str] = []
     with get_conn() as conn:
         for entry_id in ordered_ids:
@@ -59,23 +71,17 @@ def compose_batch(body: ComposeBatchRequest):
             ).fetchone()
             if not entry:
                 raise HTTPException(status_code=404, detail=f"entry not found: {entry_id}")
-            by_type = _materials_by_type(conn, entry_id)
-            _require_complete(by_type, entry_id, entry["title"])
-            pages.append(
-                {
-                    "invoice_rel": by_type["invoice"][0]["stored_path"],
-                    "order_rel": by_type["order"][0]["stored_path"],
-                    "payment_rel": by_type["payment"][0]["stored_path"],
-                }
-            )
+            files = materials_by_slot(conn, entry_id)
+            require_exportable(files, entry_id, entry["title"])
+            items.append(files)
             titles.append(entry["title"])
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_name = f"batch_{len(pages)}entries_{stamp}.pdf"
+    out_name = f"batch_{len(items)}entries_{stamp}.pdf"
     from ..services.layout import ComposeError, compose_batch_pdf
 
     try:
-        out = compose_batch_pdf(pages, out_name=out_name)
+        out = compose_batch_pdf(items, out_name=out_name, layout=get_layout())
     except ComposeError as exc:
         log.exception("batch compose failed ids=%s", ordered_ids)
         raise HTTPException(
@@ -83,8 +89,8 @@ def compose_batch(body: ComposeBatchRequest):
             detail={"message": str(exc), "missing": exc.missing},
         ) from exc
 
-    log.info("batch compose ok count=%s titles=%s", len(pages), titles)
-    filename = f"报销拼版_{len(pages)}页_{stamp}.pdf"
+    log.info("batch compose ok count=%s titles=%s", len(items), titles)
+    filename = f"报销拼版_{len(items)}页_{stamp}.pdf"
     return FileResponse(out, media_type="application/pdf", filename=filename)
 
 
@@ -94,19 +100,14 @@ def compose_entry(entry_id: int):
         entry = conn.execute("SELECT id, title FROM entries WHERE id = ?", (entry_id,)).fetchone()
         if not entry:
             raise HTTPException(status_code=404, detail="entry not found")
-        by_type = _materials_by_type(conn, entry_id)
+        files = materials_by_slot(conn, entry_id)
 
-    _require_complete(by_type, entry_id, entry["title"])
+    require_exportable(files, entry_id, entry["title"])
 
     from ..services.layout import ComposeError, compose_entry_pdf
 
     try:
-        out = compose_entry_pdf(
-            entry_id=entry_id,
-            invoice_rel=by_type["invoice"][0]["stored_path"],
-            order_rel=by_type["order"][0]["stored_path"],
-            payment_rel=by_type["payment"][0]["stored_path"],
-        )
+        out = compose_entry_pdf(entry_id=entry_id, files_by_slot=files, layout=get_layout())
     except ComposeError as exc:
         log.exception("compose failed entry_id=%s", entry_id)
         raise HTTPException(status_code=400, detail={"message": str(exc), "missing": exc.missing}) from exc

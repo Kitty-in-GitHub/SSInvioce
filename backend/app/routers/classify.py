@@ -20,6 +20,7 @@ from ..services.cluster import cluster_features
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
 from ..services.features import FileFeatures, extract_features, normalize_invoice_digits
 from ..services.ocr import ocr_available
+from ..services.settings_store import invoice_slot_id
 from ..services.storage import delete_file, probe_image_size, resolve_stored, store_upload
 
 router = APIRouter(prefix="/api/classify", tags=["classify"])
@@ -113,7 +114,7 @@ def _invoice_feats_in_cluster(cluster, by_tid: dict[str, FileFeatures]) -> list[
         if not feat:
             continue
         typ = cluster.types.get(tid) or feat.suggested_type
-        if typ == "invoice":
+        if typ == invoice_slot_id():
             out.append(feat)
     return out
 
@@ -139,7 +140,7 @@ def _duplicate_for_cluster(cluster, by_tid: dict[str, FileFeatures], batch_ids: 
             if tid in cluster.temp_ids:
                 continue
             other = by_tid.get(tid)
-            if not other or other.suggested_type != "invoice":
+            if not other or other.suggested_type != invoice_slot_id():
                 continue
             if normalize_invoice_digits(other.invoice_number) == number:
                 return warning_from_hit(
@@ -157,7 +158,7 @@ def _duplicate_for_cluster(cluster, by_tid: dict[str, FileFeatures], batch_ids: 
             if tid in cluster.temp_ids:
                 continue
             other = by_tid.get(tid)
-            if not other or other.suggested_type != "invoice":
+            if not other or other.suggested_type != invoice_slot_id():
                 continue
             if other.content_sha256 and other.content_sha256 == digest:
                 return warning_from_hit(
@@ -361,7 +362,7 @@ def _insert_material(conn, *, entry_id: int | None, mat_type: MaterialType, stag
         invoice_number = invoice_number or feat.invoice_number
         invoice_code = invoice_code or feat.invoice_code
         content_sha256 = content_sha256 or feat.content_sha256
-    if mat_type != "invoice":
+    if mat_type != invoice_slot_id():
         # Keep hash for any file; clear invoice ids for non-invoice types
         invoice_number = None
         invoice_code = None
@@ -383,15 +384,15 @@ def _insert_material(conn, *, entry_id: int | None, mat_type: MaterialType, stag
             staged["width"],
             staged["height"],
             ts,
-            normalize_invoice_digits(invoice_number) if mat_type == "invoice" else None,
-            normalize_invoice_digits(invoice_code) if mat_type == "invoice" else None,
+            normalize_invoice_digits(invoice_number) if mat_type == invoice_slot_id() else None,
+            normalize_invoice_digits(invoice_code) if mat_type == invoice_slot_id() else None,
             content_sha256,
         ),
     )
     material_id = int(cur.lastrowid)
     if entry_id is not None:
         conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, entry_id))
-        if mat_type == "invoice":
+        if mat_type == invoice_slot_id():
             feat_amount = feat.amount if isinstance(feat, FileFeatures) else None
             apply_auto_amount(
                 conn,
@@ -421,7 +422,7 @@ def classify_confirm(body: ClassifyConfirmRequest):
                     raise HTTPException(status_code=400, detail=f"unknown temp_id: {m.temp_id}")
 
             for m in cluster.materials:
-                if m.type != "invoice":
+                if m.type != invoice_slot_id():
                     continue
                 staged = _STAGING[m.temp_id]
                 feat = staged.get("features")
@@ -484,7 +485,7 @@ def classify_confirm(body: ClassifyConfirmRequest):
                     detail=f"请为 {staged['original_name']} 指定类型后再入库",
                 )
 
-            if item.type == "invoice":
+            if item.type == invoice_slot_id():
                 feat = staged.get("features")
                 number = staged.get("invoice_number")
                 if isinstance(feat, FileFeatures):

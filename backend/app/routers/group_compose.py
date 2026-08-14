@@ -8,6 +8,8 @@ from fastapi.responses import FileResponse
 
 from ..db import get_conn
 from ..logging_config import get_logger
+from ..routers.compose import materials_by_slot, require_exportable
+from ..services.settings_store import get_layout
 
 router = APIRouter(prefix="/api/groups", tags=["groups-compose"])
 log = get_logger("groups")
@@ -33,29 +35,22 @@ def compose_group(group_id: int):
             raise HTTPException(status_code=400, detail="该组没有条目，无法导出")
 
         incomplete = []
-        pages: list[dict[str, str]] = []
+        items: list[dict[str, str]] = []
         for e in entries:
-            mats = conn.execute(
-                "SELECT * FROM materials WHERE entry_id = ? ORDER BY id",
-                (e["id"],),
-            ).fetchall()
-            by_type: dict[str, list] = {"invoice": [], "order": [], "payment": []}
-            for m in mats:
-                if m["type"] in by_type:
-                    by_type[m["type"]].append(m)
-            missing = [t for t, items in by_type.items() if not items]
-            if missing:
+            files = materials_by_slot(conn, e["id"])
+            try:
+                require_exportable(files, e["id"], e["title"])
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {"missing": []}
                 incomplete.append(
-                    {"entry_id": e["id"], "title": e["title"], "missing": missing}
+                    {
+                        "entry_id": e["id"],
+                        "title": e["title"],
+                        "missing": detail.get("missing") or [],
+                    }
                 )
                 continue
-            pages.append(
-                {
-                    "invoice_rel": by_type["invoice"][0]["stored_path"],
-                    "order_rel": by_type["order"][0]["stored_path"],
-                    "payment_rel": by_type["payment"][0]["stored_path"],
-                }
-            )
+            items.append(files)
 
         if incomplete:
             raise HTTPException(
@@ -69,11 +64,11 @@ def compose_group(group_id: int):
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     gname = _safe_filename(group_name)
-    out_name = f"group_{group_id}_{len(pages)}entries_{stamp}.pdf"
+    out_name = f"group_{group_id}_{len(items)}entries_{stamp}.pdf"
     from ..services.layout import ComposeError, compose_batch_pdf
 
     try:
-        out = compose_batch_pdf(pages, out_name=out_name)
+        out = compose_batch_pdf(items, out_name=out_name, layout=get_layout())
     except ComposeError as exc:
         log.exception("group compose failed group_id=%s", group_id)
         raise HTTPException(
@@ -81,6 +76,6 @@ def compose_group(group_id: int):
             detail={"message": str(exc), "missing": exc.missing},
         ) from exc
 
-    log.info("group compose ok group_id=%s pages=%s", group_id, len(pages))
-    filename = f"{gname}_拼版_{len(pages)}页_{stamp}.pdf"
+    log.info("group compose ok group_id=%s items=%s", group_id, len(items))
+    filename = f"{gname}_拼版_{len(items)}页_{stamp}.pdf"
     return FileResponse(out, media_type="application/pdf", filename=filename)

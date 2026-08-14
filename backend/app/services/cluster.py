@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from ..models import MaterialType
 from .features import FileFeatures
+from .settings_store import invoice_slot_id, required_slot_ids
 
 
 @dataclass
@@ -34,6 +35,11 @@ class ProposedCluster:
 NEEDED = ("invoice", "order", "payment")
 
 
+def _needed() -> tuple[str, ...]:
+    ids = required_slot_ids()
+    return tuple(ids) if ids else NEEDED
+
+
 def _amount_key(amount: float | None) -> str | None:
     if amount is None:
         return None
@@ -47,7 +53,7 @@ def _title_for(feats: list[FileFeatures], amount: float | None) -> str:
     date = next((f.date for f in feats if f.date), None)
     stem = None
     for f in feats:
-        if f.suggested_type == "invoice":
+        if f.suggested_type == invoice_slot_id():
             stem = f.original_name.rsplit(".", 1)[0]
             break
 
@@ -104,26 +110,27 @@ def _split_by_signals(group: list[FileFeatures]) -> list[list[FileFeatures]]:
 
 
 def _pack_trio(group: list[FileFeatures], cluster_idx: int) -> tuple[list[ProposedCluster], list[FileFeatures]]:
-    """Greedily form clusters with at most one of each type."""
-    by_type: dict[MaterialType, list[FileFeatures]] = defaultdict(list)
+    """Greedily form clusters with at most one of each required slot."""
+    needed = _needed()
+    by_type: dict[str, list[FileFeatures]] = defaultdict(list)
     unknown: list[FileFeatures] = []
     for f in group:
-        if f.suggested_type in NEEDED:
+        if f.suggested_type in needed:
             by_type[f.suggested_type].append(f)
         else:
             unknown.append(f)
 
     clusters: list[ProposedCluster] = []
-    while any(by_type[t] for t in NEEDED):
+    while any(by_type[t] for t in needed):
         picked: list[FileFeatures] = []
-        for t in NEEDED:
+        for t in needed:
             if by_type[t]:
                 picked.append(by_type[t].pop(0))
         if not picked:
             break
         amount = next((p.amount for p in picked if p.amount is not None), None)
         merchant = next((p.merchant for p in picked if p.merchant), None)
-        missing = [t for t in NEEDED if not any(p.suggested_type == t for p in picked)]
+        missing = [t for t in needed if not any(p.suggested_type == t for p in picked)]
         cid = f"c{cluster_idx:04d}"
         cluster_idx += 1
         clusters.append(
@@ -139,13 +146,13 @@ def _pack_trio(group: list[FileFeatures], cluster_idx: int) -> tuple[list[Propos
             )
         )
 
-    leftovers = unknown + [f for t in NEEDED for f in by_type[t]]
+    leftovers = unknown + [f for t in needed for f in by_type[t]]
     return clusters, leftovers
 
 
 def _try_attach(f: FileFeatures, clusters: list[ProposedCluster], by_id: dict[str, FileFeatures]) -> bool:
     """Attach a typed file into an incomplete cluster when signals agree."""
-    if f.suggested_type not in NEEDED:
+    if f.suggested_type not in _needed():
         return False
     candidates = [c for c in clusters if f.suggested_type in c.missing]
     if not candidates:

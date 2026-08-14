@@ -201,6 +201,8 @@ export const api = {
     }),
   resetClassifyKeywords: () =>
     request('/api/settings/classify-keywords/reset', { method: 'POST' }),
+  resetLayout: () =>
+    request('/api/settings/layout/reset', { method: 'POST' }),
 }
 
 export function formatAmount(val) {

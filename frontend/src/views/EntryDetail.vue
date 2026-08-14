@@ -128,7 +128,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, isImageMaterial, isPdfMaterial, missingLabel, TYPE_LABELS } from '../api/client'
+import { api, isImageMaterial, isPdfMaterial } from '../api/client'
+import { acceptForKind, missingLabelFromSlots, useSlots } from '../composables/useSlots'
 import InvoiceDupCompare from '../components/InvoiceDupCompare.vue'
 import MaterialPreview from '../components/MaterialPreview.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
@@ -149,18 +150,28 @@ const editNote = ref('')
 const editAmount = ref('')
 const editGroupId = ref(null)
 const compare = ref(null)
+const { slots: slotDefs, slotLabels, invoiceId } = useSlots()
+
+function missingLabel(missing) {
+  return missingLabelFromSlots(missing, slotLabels.value)
+}
 
 const slots = computed(() => {
   const mats = entry.value?.materials || []
   const pick = (type) => mats.find((m) => m.type === type) || null
-  return [
-    { type: 'invoice', label: TYPE_LABELS.invoice, accept: 'application/pdf,.pdf', material: pick('invoice') },
-    { type: 'order', label: TYPE_LABELS.order, accept: 'image/*', material: pick('order') },
-    { type: 'payment', label: TYPE_LABELS.payment, accept: 'image/*', material: pick('payment') },
-  ]
+  return (slotDefs.value.length ? slotDefs.value : [
+    { id: 'invoice', label: '发票', file_kind: 'pdf' },
+    { id: 'order', label: '订单截图', file_kind: 'image' },
+    { id: 'payment', label: '支付记录', file_kind: 'image' },
+  ]).map((s) => ({
+    type: s.id,
+    label: s.label,
+    accept: acceptForKind(s.file_kind),
+    material: pick(s.id),
+  }))
 })
 
-const invoiceMaterial = computed(() => slots.value.find((s) => s.type === 'invoice')?.material || null)
+const invoiceMaterial = computed(() => slots.value.find((s) => s.type === invoiceId.value)?.material || null)
 
 function previewKind(m) {
   if (isPdfMaterial(m)) return 'pdf'
@@ -298,7 +309,7 @@ async function onUpload(ev, type) {
     if (existing) await api.deleteMaterial(existing.id)
     const uploaded = await api.uploadMaterial(file, { entryId: Number(props.id), type })
     await load()
-    msg.value = `${TYPE_LABELS[type]}已更新`
+    msg.value = `${slotLabels.value[type] || type}已更新`
     if (uploaded?.duplicate_warning) {
       dupWarn.value = uploaded.duplicate_warning
     }

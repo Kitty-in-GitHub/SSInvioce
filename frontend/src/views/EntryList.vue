@@ -242,11 +242,16 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { api, formatAmount, missingLabel } from '../api/client'
+import { api, formatAmount } from '../api/client'
+import { missingLabelFromSlots, useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
 
 const { askConfirm } = useConfirmDialog()
+const { slotLabels } = useSlots()
+function missingLabel(missing) {
+  return missingLabelFromSlots(missing, slotLabels.value)
+}
 const { openBatchUpload } = useBatchUploadDialog()
 const entries = ref([])
 const groups = ref([])
