@@ -67,6 +67,8 @@ def init_db() -> None:
         _ensure_column(conn, "entries", "amount", "REAL")
         _ensure_column(conn, "entries", "amount_source", "TEXT NOT NULL DEFAULT 'empty'")
         _ensure_column(conn, "entries", "amount_auto", "REAL")
+        _ensure_column(conn, "entries", "expense_row", "TEXT")
+        _ensure_column(conn, "groups", "form_data", "TEXT NOT NULL DEFAULT '{}'")
         _ensure_column(conn, "materials", "invoice_number", "TEXT")
         _ensure_column(conn, "materials", "invoice_code", "TEXT")
         _ensure_column(conn, "materials", "content_sha256", "TEXT")

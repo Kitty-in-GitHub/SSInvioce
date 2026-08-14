@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from ..db import get_conn, now_iso, row_to_dict
 from ..logging_config import get_logger
 from ..models import GroupCreate, GroupOut, GroupUpdate
+from ..services.forms import DEFAULT_FORM_ID, group_has_form
 from ..services.serializers import completeness_from_types
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
@@ -53,6 +54,7 @@ def _group_payload(conn, group_id: int) -> GroupOut:
         sort_order=g["sort_order"] or 0,
         created_at=g["created_at"],
         updated_at=g["updated_at"],
+        has_form=group_has_form(g.get("form_data"), DEFAULT_FORM_ID),
         **stats,
     )
 

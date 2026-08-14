@@ -97,6 +97,7 @@
                     >
                       {{ section.group.complete ? '齐套' : `缺 ${section.group.incomplete_count}` }}
                     </span>
+                    <span v-if="section.group?.has_form" class="chip chip-ok">已填表</span>
                     <span v-else-if="section.entries.length" class="chip chip-muted">未分组</span>
                   </span>
                 </div>
@@ -106,8 +107,16 @@
                   v-if="section.group"
                   class="link-btn"
                   type="button"
+                  @click="openForm(section.group)"
+                >
+                  {{ section.group.has_form ? '改表' : '填表' }}
+                </button>
+                <button
+                  v-if="section.group"
+                  class="link-btn"
+                  type="button"
                   :disabled="!section.group.complete || composingGroupId === section.group.id"
-                  :title="section.group.complete ? '' : '组内有不齐套条目，禁止导出'"
+                  :title="section.group.complete ? (section.group.has_form ? '将把已填表格拼进 PDF 首页' : '未填表则只导出材料') : '组内有不齐套条目，禁止导出'"
                   @click="composeGroup(section.group)"
                 >
                   {{ composingGroupId === section.group.id ? '导出中…' : '导出本组' }}
@@ -237,6 +246,7 @@
         </div>
       </div>
     </template>
+    <GroupFormDialog :group-id="formGroupId" @close="formGroupId = null" @saved="load" />
   </div>
 </template>
 
@@ -246,6 +256,7 @@ import { api, formatAmount } from '../api/client'
 import { missingLabelFromSlots, useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
+import GroupFormDialog from '../components/GroupFormDialog.vue'
 
 const { askConfirm } = useConfirmDialog()
 const { slotLabels } = useSlots()
@@ -262,6 +273,7 @@ const error = ref('')
 const hint = ref('')
 const composingId = ref(null)
 const composingGroupId = ref(null)
+const formGroupId = ref(null)
 const selectedIds = ref([])
 const batchComposing = ref(false)
 const batchDeleting = ref(false)
@@ -668,6 +680,10 @@ async function composeSelected() {
   } finally {
     batchComposing.value = false
   }
+}
+
+function openForm(g) {
+  formGroupId.value = g.id
 }
 
 async function composeGroup(g) {

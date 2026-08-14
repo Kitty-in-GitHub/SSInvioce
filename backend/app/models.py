@@ -21,6 +21,8 @@ class EntryUpdate(BaseModel):
     group_id: Optional[int] = None
     amount: Optional[float] = None
     clear_group: bool = False
+    expense_row: Optional[str] = None
+    clear_expense_row: bool = False
 
 
 class DuplicateWarning(BaseModel):
@@ -72,6 +74,7 @@ class EntryOut(BaseModel):
     amount: Optional[float] = None
     amount_source: AmountSource = "empty"
     amount_auto: Optional[float] = None
+    expense_row: Optional[str] = None
 
 
 class MaterialTypeUpdate(BaseModel):
@@ -132,6 +135,7 @@ class GroupOut(BaseModel):
     amount_sum: float = 0.0
     complete: bool = True
     incomplete_count: int = 0
+    has_form: bool = False
 
 
 class ReparseAmountRequest(BaseModel):

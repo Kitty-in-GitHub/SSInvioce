@@ -47,6 +47,7 @@ def _entry_payload(conn, entry_id: int, *, with_materials: bool = True) -> Entry
         amount=e.get("amount"),
         amount_source=source,
         amount_auto=e.get("amount_auto"),
+        expense_row=e.get("expense_row"),
     )
 
 
@@ -127,10 +128,17 @@ def update_entry(entry_id: int, body: EntryUpdate):
             else:
                 amount_source = "manual"
 
+        if body.clear_expense_row:
+            expense_row = None
+        elif "expense_row" in patch:
+            expense_row = (body.expense_row or "").strip() or None
+        else:
+            expense_row = existing.get("expense_row")
+
         conn.execute(
             """
             UPDATE entries
-            SET title = ?, note = ?, group_id = ?, amount = ?, amount_source = ?, amount_auto = ?, updated_at = ?
+            SET title = ?, note = ?, group_id = ?, amount = ?, amount_source = ?, amount_auto = ?, expense_row = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -140,6 +148,7 @@ def update_entry(entry_id: int, body: EntryUpdate):
                 amount,
                 amount_source,
                 amount_auto,
+                expense_row,
                 now_iso(),
                 entry_id,
             ),

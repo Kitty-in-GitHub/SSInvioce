@@ -8,6 +8,7 @@ from typing import Any
 
 from ..config import DATA_DIR
 from ..logging_config import get_logger
+from .forms import default_form_templates, normalize_form_templates
 
 log = get_logger("settings")
 
@@ -129,6 +130,7 @@ def default_settings() -> dict[str, Any]:
         "slots": slots,
         "layout": default_layout(),
         "custom_colors": [],
+        "form_templates": default_form_templates(),
         "classify_keywords": _keywords_from_slots(slots),
     }
 
@@ -274,6 +276,7 @@ def _normalize_all(data: dict[str, Any]) -> dict[str, Any]:
         "layout": layout,
         "custom_colors": _normalize_custom_colors(data.get("custom_colors")),
         "preset_colors": list(SLOT_COLORS),
+        "form_templates": normalize_form_templates(data.get("form_templates")),
         "classify_keywords": _keywords_from_slots(slots),
     }
 
@@ -297,6 +300,7 @@ def _write_file(data: dict[str, Any]) -> None:
         "slots": data.get("slots") or [],
         "layout": data.get("layout") or default_layout(),
         "custom_colors": data.get("custom_colors") or [],
+        "form_templates": data.get("form_templates") or default_form_templates(),
     }
     tmp = SETTINGS_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -318,6 +322,8 @@ def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
             merged["layout"] = patch["layout"]
         if "custom_colors" in patch and patch["custom_colors"] is not None:
             merged["custom_colors"] = patch["custom_colors"]
+        if "form_templates" in patch and patch["form_templates"] is not None:
+            merged["form_templates"] = patch["form_templates"]
         if "classify_keywords" in patch and patch["classify_keywords"] is not None and "slots" not in patch:
             kw = patch["classify_keywords"]
             if isinstance(kw, dict):
@@ -342,6 +348,10 @@ def get_slots() -> list[dict[str, Any]]:
 
 def get_layout() -> dict[str, Any]:
     return get_settings()["layout"]
+
+
+def get_form_templates() -> list[dict[str, Any]]:
+    return get_settings()["form_templates"]
 
 
 def invoice_slot_id() -> str:

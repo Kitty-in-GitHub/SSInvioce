@@ -458,10 +458,94 @@ button, input, select, textarea { font: inherit; }
   line-height: 1.5;
   white-space: pre-wrap;
 }
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
+.form-fill-card {
+  width: min(980px, 100%);
+}
+.form-fill-h {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.95rem;
+}
+.form-fill-date {
+  margin-bottom: 0.75rem;
+  max-width: 14rem;
+}
+.form-fill-fields {
+  margin-bottom: 0.5rem;
+}
+.form-fill-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.form-fill-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.form-fill-table th,
+.form-fill-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+}
+.form-fill-table th {
+  background: #f4f7fb;
+  font-weight: 600;
+}
+.form-fill-money {
+  width: 6.5rem;
+}
+.form-fill-assigned {
+  min-width: 8rem;
+}
+.form-fill-chip {
+  display: inline-block;
+  margin: 0 0.25rem 0.25rem 0;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: #e6edf7;
+  font-size: 0.78rem;
+}
+.form-fill-total td {
+  font-weight: 650;
+}
+.form-fill-entries {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+.form-fill-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) auto minmax(8rem, 0.9fr);
   gap: 0.5rem;
+  align-items: center;
+}
+.form-fill-entry-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.form-template-editor {
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+.form-template-editor:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+.form-def-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+.form-docx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
 }
 .batch-upload-table-wrap {
   margin-top: 1rem;

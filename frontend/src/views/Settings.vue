@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h1>设置</h1>
-        <p>槽位、分类关键词与拼版画板</p>
+        <p>槽位、拼版画板、分类关键词与公文表</p>
       </div>
     </div>
 
@@ -11,6 +11,7 @@
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'slots'" :class="{ active: tab === 'slots' }" @click="tab = 'slots'">槽位</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'layout'" :class="{ active: tab === 'layout' }" @click="tab = 'layout'">拼版</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'keywords'" :class="{ active: tab === 'keywords' }" @click="tab = 'keywords'">分类关键词</button>
+      <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'forms'" :class="{ active: tab === 'forms' }" @click="tab = 'forms'">表格</button>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -239,6 +240,58 @@
         <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">{{ saving ? '保存中…' : '保存' }}</button>
       </div>
     </section>
+
+    <section v-show="!loading && tab === 'forms'" class="settings-panel card" role="tabpanel">
+      <p class="meta settings-lead">公文表字段与支出行可增删改。Word 模板空单元格需使用对应占位符，例如 <code v-pre>{{activity_name}}</code>、<code v-pre>{{expenses.materials.reimburse}}</code>。</p>
+      <div v-for="(form, fIdx) in draftForms" :key="form.id" class="form-template-editor">
+        <div class="slot-editor-head">
+          <strong>{{ form.name }}</strong>
+          <span class="meta">{{ form.id }} · {{ form.has_user_docx ? '已替换 Word' : '使用内置 Word' }}</span>
+        </div>
+        <div class="meta-grid slot-fields">
+          <div class="field">
+            <label>显示名</label>
+            <input v-model="form.name" maxlength="40" />
+          </div>
+          <div class="field">
+            <label>模板 ID</label>
+            <input :value="form.id" disabled />
+          </div>
+        </div>
+        <h4 class="form-fill-h">字段</h4>
+        <div v-for="(field, i) in form.fields" :key="field.id + '-' + i" class="form-def-row">
+          <input v-model="field.id" maxlength="32" placeholder="id" :disabled="['fund_code','year','month','day','activity_name'].includes(field.id)" />
+          <input v-model="field.label" maxlength="40" placeholder="显示名" />
+          <select v-model="field.type">
+            <option value="text">文本</option>
+            <option value="date">日期</option>
+            <option value="number">数字</option>
+            <option value="money">金额</option>
+          </select>
+          <button class="btn-ghost custom-color-remove" type="button" title="删除字段" @click="form.fields.splice(i, 1)">×</button>
+        </div>
+        <button class="btn btn-sm" type="button" @click="addFormField(form)">添加字段</button>
+        <h4 class="form-fill-h">支出行</h4>
+        <div v-for="(row, i) in (form.tables[0]?.rows || [])" :key="row.id + '-' + i" class="form-def-row">
+          <input v-model="row.id" maxlength="32" placeholder="id" />
+          <input v-model="row.label" maxlength="40" placeholder="支出内容" />
+          <input v-model="row.remark" maxlength="80" placeholder="默认备注" />
+          <button class="btn-ghost custom-color-remove" type="button" title="删除行" @click="form.tables[0].rows.splice(i, 1)">×</button>
+        </div>
+        <button class="btn btn-sm" type="button" @click="addFormRow(form)">添加支出行</button>
+        <div class="form-docx-actions">
+          <label class="btn btn-sm">
+            替换 Word 模板
+            <input type="file" accept=".docx" hidden @change="onFormDocx($event, form)" />
+          </label>
+          <button v-if="form.has_user_docx" class="btn btn-sm" type="button" @click="resetFormDocx(form)">恢复内置 Word</button>
+          <button class="btn btn-sm" type="button" @click="resetFormSchema(form)">恢复默认字段与行</button>
+        </div>
+      </div>
+      <div class="actions settings-actions">
+        <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">{{ saving ? '保存中…' : '保存表格定义' }}</button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -249,7 +302,7 @@ import { api } from '../api/client'
 import { loadSlots } from '../composables/useSlots'
 
 const route = useRoute()
-const tab = ref(route.query.tab === 'layout' ? 'layout' : route.query.tab === 'keywords' ? 'keywords' : 'slots')
+const tab = ref(['layout', 'keywords', 'forms'].includes(route.query.tab) ? route.query.tab : 'slots')
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -278,6 +331,8 @@ const pageIdx = ref(0)
 const selectedIdx = ref(-1)
 const boardEl = ref(null)
 const drag = ref(null)
+const draftForms = ref([])
+const formFileBusy = ref(false)
 
 const currentRegions = computed(() => draftLayout.value.pages[pageIdx.value]?.regions || [])
 const placedIds = computed(() => {
@@ -392,6 +447,12 @@ function cloneSettings(res) {
   pageIdx.value = Math.min(pageIdx.value, draftLayout.value.pages.length - 1)
   presetColors.value = (res.preset_colors || []).length ? [...res.preset_colors] : [...presetColors.value]
   customColors.value = [...(res.custom_colors || [])]
+  draftForms.value = JSON.parse(JSON.stringify(res.form_templates || []))
+  for (const form of draftForms.value) {
+    if (!form.tables?.length) {
+      form.tables = [{ id: 'expenses', label: '支出', columns: [], rows: [], total: true }]
+    }
+  }
   activeSlotIdx.value = Math.min(activeSlotIdx.value, Math.max(0, draftSlots.value.length - 1))
   for (const s of draftSlots.value) {
     if (!(s.id in kwInputs)) kwInputs[s.id] = ''
@@ -597,6 +658,7 @@ async function saveAll() {
       })),
       layout: JSON.parse(JSON.stringify(draftLayout.value)),
       custom_colors: [...customColors.value],
+      form_templates: JSON.parse(JSON.stringify(draftForms.value)),
     }
     const res = await api.updateSettings(payload)
     cloneSettings(res)
@@ -641,10 +703,78 @@ async function resetLayoutOnly() {
   }
 }
 
+function addFormField(form) {
+  const n = (form.fields || []).length + 1
+  let id = `field_${n}`
+  const used = new Set((form.fields || []).map((f) => f.id))
+  while (used.has(id)) id = `field_${n}_${used.size}`
+  form.fields.push({ id, label: `字段${n}`, type: 'text' })
+}
+
+function addFormRow(form) {
+  if (!form.tables?.length) {
+    form.tables = [{ id: 'expenses', label: '支出', columns: [], rows: [], total: true }]
+  }
+  const list = form.tables[0].rows
+  const n = list.length + 1
+  let id = `row_${n}`
+  const used = new Set(list.map((r) => r.id))
+  while (used.has(id)) id = `row_${n}_${used.size}`
+  list.push({ id, label: `支出${n}`, remark: '' })
+}
+
+async function onFormDocx(ev, form) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!file) return
+  formFileBusy.value = true
+  error.value = ''
+  msg.value = ''
+  try {
+    const res = await api.uploadFormDocx(form.id, file)
+    cloneSettings(res)
+    msg.value = '已替换 Word 模板'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    formFileBusy.value = false
+  }
+}
+
+async function resetFormDocx(form) {
+  formFileBusy.value = true
+  error.value = ''
+  msg.value = ''
+  try {
+    const res = await api.resetFormDocx(form.id)
+    cloneSettings(res)
+    msg.value = '已恢复内置 Word 模板'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    formFileBusy.value = false
+  }
+}
+
+async function resetFormSchema(form) {
+  saving.value = true
+  error.value = ''
+  msg.value = ''
+  try {
+    const res = await api.resetFormTemplate(form.id)
+    cloneSettings(res)
+    msg.value = '已恢复默认字段与支出行'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
 watch(
   () => route.query.tab,
   (v) => {
-    if (v === 'layout' || v === 'keywords' || v === 'slots') tab.value = v
+    if (v === 'layout' || v === 'keywords' || v === 'slots' || v === 'forms') tab.value = v
   },
 )
 

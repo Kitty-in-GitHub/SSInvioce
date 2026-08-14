@@ -9,6 +9,17 @@ from fastapi.responses import FileResponse
 from ..db import get_conn
 from ..logging_config import get_logger
 from ..routers.compose import materials_by_slot, require_exportable
+from ..services.forms import (
+    DEFAULT_FORM_ID,
+    FormError,
+    apply_auto_reimburse,
+    auto_reimburse_map,
+    docx_to_pdf,
+    get_form_template,
+    merge_form_values,
+    parse_form_data,
+    render_docx,
+)
 from ..services.settings_store import get_layout
 
 router = APIRouter(prefix="/api/groups", tags=["groups-compose"])
@@ -61,14 +72,43 @@ def compose_group(group_id: int):
                 },
             )
         group_name = group["name"]
+        form_data = parse_form_data(group["form_data"] if "form_data" in group.keys() else None)
+        entry_rows = conn.execute(
+            "SELECT id, amount, expense_row FROM entries WHERE group_id = ? ORDER BY id",
+            (group_id,),
+        ).fetchall()
 
+    prepend_pdf = None
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     gname = _safe_filename(group_name)
+    saved_form = form_data.get(DEFAULT_FORM_ID)
+    if isinstance(saved_form, dict):
+        try:
+            template = get_form_template(DEFAULT_FORM_ID)
+            values = apply_auto_reimburse(
+                merge_form_values(template, saved_form),
+                auto_reimburse_map([dict(r) for r in entry_rows], template),
+            )
+            from ..config import EXPORTS_DIR, ensure_dirs
+
+            ensure_dirs()
+            docx_path = EXPORTS_DIR / f"group_{group_id}_{DEFAULT_FORM_ID}_{stamp}.docx"
+            pdf_path = EXPORTS_DIR / f"group_{group_id}_{DEFAULT_FORM_ID}_{stamp}.pdf"
+            render_docx(template, values, docx_path)
+            prepend_pdf = docx_to_pdf(docx_path, pdf_path)
+        except FormError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     out_name = f"group_{group_id}_{len(items)}entries_{stamp}.pdf"
     from ..services.layout import ComposeError, compose_batch_pdf
 
     try:
-        out = compose_batch_pdf(items, out_name=out_name, layout=get_layout())
+        out = compose_batch_pdf(
+            items,
+            out_name=out_name,
+            layout=get_layout(),
+            prepend_pdf=prepend_pdf,
+        )
     except ComposeError as exc:
         log.exception("group compose failed group_id=%s", group_id)
         raise HTTPException(
@@ -76,6 +116,6 @@ def compose_group(group_id: int):
             detail={"message": str(exc), "missing": exc.missing},
         ) from exc
 
-    log.info("group compose ok group_id=%s items=%s", group_id, len(items))
-    filename = f"{gname}_拼版_{len(items)}页_{stamp}.pdf"
+    log.info("group compose ok group_id=%s items=%s form=%s", group_id, len(items), bool(prepend_pdf))
+    filename = f"{gname}_拼版_{stamp}.pdf"
     return FileResponse(out, media_type="application/pdf", filename=filename)

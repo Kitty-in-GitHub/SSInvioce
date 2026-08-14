@@ -322,12 +322,19 @@ def compose_batch_pdf(
     *,
     out_name: str = "batch_compose.pdf",
     layout: dict | None = None,
+    prepend_pdf: Path | None = None,
 ) -> Path:
     if not items:
         raise ComposeError("no pages to compose")
     ensure_dirs()
     fitz = _fitz()
     doc = fitz.open()
+    if prepend_pdf:
+        extra = fitz.open(prepend_pdf)
+        try:
+            doc.insert_pdf(extra)
+        finally:
+            extra.close()
     spec = layout or get_layout()
     for i, files_by_slot in enumerate(items):
         try:
