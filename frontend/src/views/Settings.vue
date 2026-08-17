@@ -3,11 +3,12 @@
     <div class="page-head">
       <div>
         <h1>设置</h1>
-        <p>槽位、拼版画板、分类关键词与公文表</p>
+        <p>外观主题、槽位、拼版画板、分类关键词与公文表</p>
       </div>
     </div>
 
     <div class="settings-tabs" role="tablist">
+      <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'appearance'" :class="{ active: tab === 'appearance' }" @click="tab = 'appearance'">外观</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'slots'" :class="{ active: tab === 'slots' }" @click="tab = 'slots'">槽位</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'layout'" :class="{ active: tab === 'layout' }" @click="tab = 'layout'">拼版</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'keywords'" :class="{ active: tab === 'keywords' }" @click="tab = 'keywords'">分类关键词</button>
@@ -16,7 +17,29 @@
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="msg" class="okmsg">{{ msg }}</p>
-    <div v-if="loading" class="meta">加载中…</div>
+    <div v-if="loading && tab !== 'appearance'" class="meta">加载中…</div>
+
+    <section v-show="tab === 'appearance'" class="settings-panel card" role="tabpanel">
+      <p class="meta settings-lead">选择一套预设主题。仅影响本机界面配色，立即生效并记住选择。</p>
+      <div class="theme-grid" role="listbox" aria-label="主题预设">
+        <button
+          v-for="t in themePresets"
+          :key="t.id"
+          type="button"
+          class="theme-card"
+          role="option"
+          :aria-selected="themeId === t.id"
+          :class="{ active: themeId === t.id }"
+          @click="setTheme(t.id)"
+        >
+          <div class="theme-swatches" aria-hidden="true">
+            <span v-for="(c, i) in t.swatches" :key="i" :style="{ background: c }" />
+          </div>
+          <strong>{{ t.name }}</strong>
+          <span class="meta">{{ t.blurb }}</span>
+        </button>
+      </div>
+    </section>
 
     <section v-show="!loading && tab === 'slots'" class="settings-panel card" role="tabpanel">
       <p class="meta settings-lead">全局一套槽位。发票是唯一特殊 PDF 槽；其它自定义槽一般为图片。删除仍有材料的槽位会被拒绝。</p>
@@ -300,9 +323,13 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import { loadSlots } from '../composables/useSlots'
+import { useTheme } from '../composables/useTheme'
 
 const route = useRoute()
-const tab = ref(['layout', 'keywords', 'forms'].includes(route.query.tab) ? route.query.tab : 'slots')
+const { themeId, presets: themePresets, setTheme } = useTheme()
+const tab = ref(
+  ['appearance', 'layout', 'keywords', 'forms'].includes(route.query.tab) ? route.query.tab : 'slots',
+)
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
