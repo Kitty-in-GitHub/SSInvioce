@@ -102,69 +102,76 @@
 
     <div v-if="unmatchedItems.length" class="unmatched-block">
       <h4 class="cluster-section-title">未匹配（{{ unmatchedItems.length }}）</h4>
-      <table class="table">
-        <thead>
-          <tr>
-            <th>预览</th>
-            <th>文件名</th>
-            <th>类型</th>
-            <th>金额</th>
-            <th>归属</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in unmatchedItems" :key="item.temp_id">
-            <td>
-              <MaterialPreview
-                v-if="item.localUrl"
-                :url="item.localUrl"
-                :kind="isPdfName(item.original_name) ? 'pdf' : 'image'"
-                mode="compact"
-                :title="item.original_name"
-              />
-              <span v-else class="meta">—</span>
-            </td>
-            <td>
-              <div>{{ item.original_name }}</div>
-              <div v-if="item.features?.text_preview" class="meta entry-note">{{ item.features.text_preview }}</div>
-            </td>
-            <td>
-              <select v-model="item.type">
-                <option v-for="s in slotDefs" :key="'u-'+s.id" :value="s.id">{{ s.label }}</option>
-                <option value="unknown">未分类</option>
-              </select>
-            </td>
-            <td class="meta">{{ item.features?.amount != null ? `¥${Number(item.features.amount).toFixed(2)}` : '—' }}</td>
-            <td class="batch-assign">
-              <select v-model="item.assignMode">
-                <option value="inbox">先放收件箱</option>
-                <option value="existing">挂到已有条目</option>
-                <option value="new">新建条目</option>
-                <option v-for="c in clusters" :key="c.cluster_id" :value="`cluster:${c.cluster_id}`">
-                  并入：{{ c.title }}
-                </option>
-              </select>
-              <select v-if="item.assignMode === 'existing'" v-model.number="item.entry_id">
-                <option :value="null" disabled>选择条目</option>
-                <option v-for="e in entries" :key="e.id" :value="e.id">{{ e.title }}</option>
-              </select>
-              <input
-                v-if="item.assignMode === 'new'"
-                v-model="item.create_entry_title"
-                placeholder="新条目名称"
-              />
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="unmatched-list">
+        <div
+          v-for="item in unmatchedItems"
+          :key="item.temp_id"
+          class="unmatched-row"
+          :class="{ 'unmatched-row-warn': problemTempIds.has(item.temp_id) }"
+          :data-temp-id="item.temp_id"
+        >
+          <div class="unmatched-preview">
+            <MaterialPreview
+              v-if="item.localUrl"
+              :url="item.localUrl"
+              :kind="isPdfName(item.original_name) ? 'pdf' : 'image'"
+              mode="compact"
+              :title="item.original_name"
+            />
+            <span v-else class="meta">—</span>
+          </div>
+          <div class="unmatched-name">
+            <div class="unmatched-filename">{{ item.original_name }}</div>
+            <div v-if="item.features?.text_preview" class="meta entry-note">{{ item.features.text_preview }}</div>
+          </div>
+          <select v-model="item.type" class="unmatched-control">
+            <option v-for="s in slotDefs" :key="'u-'+s.id" :value="s.id">{{ s.label }}</option>
+            <option value="unknown">未分类</option>
+          </select>
+          <span class="unmatched-amount meta">
+            {{ item.features?.amount != null ? `¥${Number(item.features.amount).toFixed(2)}` : '—' }}
+          </span>
+          <div class="batch-assign">
+            <select
+              v-model="item.assignMode"
+              class="unmatched-control"
+              @change="onAssignModeChange(item)"
+            >
+              <option value="inbox">先放收件箱</option>
+              <option value="existing">挂到已有条目</option>
+              <option value="new">新建条目</option>
+              <option v-for="c in clusters" :key="c.cluster_id" :value="`cluster:${c.cluster_id}`">
+                并入：{{ c.title }}
+              </option>
+            </select>
+            <select
+              v-if="item.assignMode === 'existing'"
+              v-model.number="item.entry_id"
+              class="unmatched-control"
+            >
+              <option :value="null" disabled>选择条目</option>
+              <option v-for="e in entries" :key="e.id" :value="e.id">{{ e.title }}</option>
+            </select>
+            <input
+              v-if="item.assignMode === 'new'"
+              v-model="item.create_entry_title"
+              class="unmatched-control unmatched-title-input"
+              placeholder="新条目名称"
+            />
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="items.length" class="actions batch-upload-actions">
-      <button class="btn btn-primary" :disabled="confirming || analyzing" @click="confirm">
-        {{ confirming ? '入库中…' : '确认入库' }}
-      </button>
-      <button class="btn" type="button" :disabled="confirming || analyzing" @click="recluster">重新归组</button>
-      <button class="btn" type="button" :disabled="confirming || analyzing" @click="clear">清空</button>
+      <p v-if="error" ref="confirmErrorEl" class="error batch-confirm-error">{{ error }}</p>
+      <div class="batch-upload-action-btns">
+        <button class="btn btn-primary" :disabled="confirming || analyzing" @click="confirm">
+          {{ confirming ? '入库中…' : '确认入库' }}
+        </button>
+        <button class="btn" type="button" :disabled="confirming || analyzing" @click="recluster">重新归组</button>
+        <button class="btn" type="button" :disabled="confirming || analyzing" @click="clear">清空</button>
+      </div>
     </div>
 
     <Teleport to="body">
@@ -221,7 +228,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api/client'
 import { useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
@@ -232,6 +239,7 @@ const emit = defineEmits(['done', 'busy-change'])
 const { askConfirm } = useConfirmDialog()
 
 const fileInput = ref(null)
+const confirmErrorEl = ref(null)
 const dragging = ref(false)
 const items = ref([])
 const clusters = ref([])
@@ -245,6 +253,7 @@ const ocrAvailable = ref(null)
 const compare = ref(null)
 const compareBusy = ref(false)
 const slotPreview = ref(null)
+const problemTempIds = ref(new Set())
 /** invoice_number / peer keys the user chose to keep both */
 const keepBothKeys = ref(new Set())
 
@@ -621,6 +630,7 @@ function clear({ force = false } = {}) {
   clusters.value = []
   unmatchedIds.value = []
   keepBothKeys.value = new Set()
+  problemTempIds.value = new Set()
   compare.value = null
   slotPreview.value = null
   msg.value = ''
@@ -657,9 +667,38 @@ async function recluster() {
   }
 }
 
+function titleFromFilename(name) {
+  const base = String(name || '').trim()
+  if (!base) return ''
+  return base.replace(/\.[^.]+$/, '') || base
+}
+
+function onAssignModeChange(item) {
+  if (!item) return
+  if (item.assignMode === 'new' && !String(item.create_entry_title || '').trim()) {
+    item.create_entry_title = titleFromFilename(item.original_name)
+  }
+  problemTempIds.value = new Set()
+}
+
+function failConfirm(message, tempId = null) {
+  error.value = message
+  problemTempIds.value = tempId ? new Set([tempId]) : new Set()
+  nextTick(() => {
+    confirmErrorEl.value?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+    if (tempId) {
+      const row = [...document.querySelectorAll('.unmatched-row')].find(
+        (el) => el.getAttribute('data-temp-id') === tempId,
+      )
+      row?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+    }
+  })
+}
+
 async function confirm() {
   error.value = ''
   msg.value = ''
+  problemTempIds.value = new Set()
 
   const used = new Set()
   const clusterPayload = []
@@ -669,7 +708,7 @@ async function confirm() {
       const it = items.value.find((x) => x.temp_id === tid)
       if (!it) continue
       if (it.type === 'unknown') {
-        error.value = `拟建条目「${c.title}」中有未分类文件`
+        failConfirm(`拟建条目「${c.title}」中有未分类文件，请先选择材料类型`, tid)
         return
       }
       materials.push({ temp_id: tid, type: it.type })
@@ -679,7 +718,7 @@ async function confirm() {
     for (const it of unmatchedItems.value) {
       if (it.assignMode === `cluster:${c.cluster_id}`) {
         if (it.type === 'unknown') {
-          error.value = `请为「${it.original_name}」选择类型`
+          failConfirm(`请为「${it.original_name}」选择类型后再并入拟建条目`, it.temp_id)
           return
         }
         materials.push({ temp_id: it.temp_id, type: it.type })
@@ -688,7 +727,7 @@ async function confirm() {
     }
     if (!materials.length) continue
     if (!c.title?.trim()) {
-      error.value = '拟建条目标题不能为空'
+      failConfirm('拟建条目标题不能为空')
       return
     }
     clusterPayload.push({
@@ -702,28 +741,35 @@ async function confirm() {
   for (const it of items.value) {
     if (used.has(it.temp_id)) continue
     if (String(it.assignMode || '').startsWith('cluster:')) continue
-    if (it.type === 'unknown') {
-      error.value = `请为「${it.original_name}」选择类型`
+    const mode = it.assignMode || 'inbox'
+    // 先放收件箱允许未分类；挂到条目 / 新建条目必须指定类型
+    if (it.type === 'unknown' && mode !== 'inbox') {
+      failConfirm(`请为「${it.original_name}」选择材料类型（发票 / 订单截图 / 支付记录等）`, it.temp_id)
       return
     }
-    if (it.assignMode === 'existing' && !it.entry_id) {
-      error.value = `请为「${it.original_name}」选择条目`
+    if (mode === 'existing' && !it.entry_id) {
+      failConfirm(`请为「${it.original_name}」选择要挂入的条目`, it.temp_id)
       return
     }
-    if (it.assignMode === 'new' && !it.create_entry_title?.trim()) {
-      error.value = `请为「${it.original_name}」填写新条目名称`
-      return
+    if (mode === 'new') {
+      if (!it.create_entry_title?.trim()) {
+        it.create_entry_title = titleFromFilename(it.original_name)
+      }
+      if (!it.create_entry_title?.trim()) {
+        failConfirm(`请为「${it.original_name}」填写新条目名称`, it.temp_id)
+        return
+      }
     }
     loose.push({
       temp_id: it.temp_id,
       type: it.type,
-      entry_id: it.assignMode === 'existing' ? it.entry_id : null,
-      create_entry_title: it.assignMode === 'new' ? it.create_entry_title.trim() : null,
+      entry_id: mode === 'existing' ? it.entry_id : null,
+      create_entry_title: mode === 'new' ? it.create_entry_title.trim() : null,
     })
   }
 
   if (!clusterPayload.length && !loose.length) {
-    error.value = '没有可入库的文件'
+    failConfirm('没有可入库的文件')
     return
   }
 
@@ -735,7 +781,7 @@ async function confirm() {
     await loadEntries()
     emit('done')
   } catch (e) {
-    error.value = e.message
+    failConfirm(e.message)
   } finally {
     confirming.value = false
   }

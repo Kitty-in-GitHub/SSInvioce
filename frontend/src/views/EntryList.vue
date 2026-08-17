@@ -27,10 +27,18 @@
           </div>
           <span class="meta">已选 {{ selectedIds.length }} · 共 {{ entries.length }} 条</span>
           <div class="list-toolbar-actions">
-            <button class="btn btn-primary btn-sm" :disabled="!selectedCompleteCount || batchComposing || batchDeleting" @click="composeSelected">
+            <button
+              class="btn btn-sm"
+              type="button"
+              :disabled="!selectedIds.length || batchComposing || batchDeleting || batchMoving"
+              @click="openMoveDialog"
+            >
+              {{ batchMoving ? '移入中…' : `移入分组（${selectedIds.length}）` }}
+            </button>
+            <button class="btn btn-primary btn-sm" :disabled="!selectedCompleteCount || batchComposing || batchDeleting || batchMoving" @click="composeSelected">
               {{ batchComposing ? '合并拼版中…' : `合并导出（${selectedCompleteCount}）` }}
             </button>
-            <button class="btn btn-danger btn-sm" :disabled="!selectedIds.length || batchComposing || batchDeleting" @click="removeSelected">
+            <button class="btn btn-danger btn-sm" :disabled="!selectedIds.length || batchComposing || batchDeleting || batchMoving" @click="removeSelected">
               {{ batchDeleting ? '删除中…' : `删除选中（${selectedIds.length}）` }}
             </button>
           </div>
@@ -292,6 +300,68 @@
       </div>
     </template>
     <GroupFormDialog :group-id="formGroupId" @close="formGroupId = null" @saved="load" />
+    <Teleport to="body">
+      <div
+        v-if="moveDialogOpen"
+        class="modal-backdrop"
+        @click.self="closeMoveDialog"
+      >
+        <div
+          class="modal-card move-group-card"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="move-group-title"
+        >
+          <h3 id="move-group-title" class="modal-title">移入分组</h3>
+          <p class="modal-message">将把已选的 {{ selectedIds.length }} 条移到目标分组（可保留选中以便继续操作）。</p>
+          <div class="move-group-body">
+            <label class="move-group-option">
+              <input v-model="moveMode" type="radio" value="existing" :disabled="batchMoving" />
+              <span>已有分组</span>
+            </label>
+            <select
+              v-model="moveTargetGroupId"
+              class="move-group-select"
+              :disabled="moveMode !== 'existing' || batchMoving"
+            >
+              <option value="">未分组</option>
+              <option v-for="g in groups" :key="g.id" :value="String(g.id)">{{ g.name }}</option>
+            </select>
+            <label class="move-group-option">
+              <input
+                v-model="moveMode"
+                type="radio"
+                value="new"
+                :disabled="batchMoving"
+                @change="focusNewGroupInput"
+              />
+              <span>新建分组并移入</span>
+            </label>
+            <input
+              ref="moveNewGroupInputEl"
+              v-model="moveNewGroupName"
+              class="move-group-input"
+              type="text"
+              maxlength="80"
+              placeholder="新组名称"
+              :disabled="moveMode !== 'new' || batchMoving"
+              @keydown.enter.prevent="confirmMoveSelected"
+            />
+          </div>
+          <div class="modal-actions">
+            <button class="btn" type="button" :disabled="batchMoving" @click="closeMoveDialog">取消</button>
+            <button
+              class="btn btn-primary"
+              type="button"
+              :disabled="batchMoving || (moveMode === 'new' && !moveNewGroupName.trim())"
+              @click="confirmMoveSelected"
+            >
+              {{ batchMoving ? '移入中…' : '确定移入' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
     <input
       ref="slotFileInputEl"
       type="file"
@@ -312,7 +382,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, formatAmount, isImageMaterial, isPdfMaterial } from '../api/client'
 import { acceptForKind, useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
@@ -429,6 +499,12 @@ const formGroupId = ref(null)
 const selectedIds = ref([])
 const batchComposing = ref(false)
 const batchDeleting = ref(false)
+const batchMoving = ref(false)
+const moveDialogOpen = ref(false)
+const moveMode = ref('existing')
+const moveTargetGroupId = ref('')
+const moveNewGroupName = ref('')
+const moveNewGroupInputEl = ref(null)
 
 const draftingEntryKey = ref(null)
 const draftEntryTitle = ref('')
@@ -853,6 +929,105 @@ async function composeSelected() {
   }
 }
 
+function openMoveDialog() {
+  if (!selectedIds.value.length || batchMoving.value) return
+  moveMode.value = 'existing'
+  moveTargetGroupId.value = ''
+  moveNewGroupName.value = ''
+  moveDialogOpen.value = true
+}
+
+function closeMoveDialog() {
+  if (batchMoving.value) return
+  moveDialogOpen.value = false
+}
+
+function focusNewGroupInput() {
+  nextTick(() => {
+    moveNewGroupInputEl.value?.focus?.()
+    moveNewGroupInputEl.value?.select?.()
+  })
+}
+
+async function moveSelectedToGroup(groupId, groupLabel) {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const idSet = new Set(ids)
+  const snapshot = entries.value
+  const groupName = groupId == null ? null : groupLabel
+  entries.value = entries.value.map((e) =>
+    idSet.has(e.id) ? { ...e, group_id: groupId, group_name: groupName } : e,
+  )
+  batchMoving.value = true
+  error.value = ''
+  hint.value = ''
+  try {
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        api.updateEntry(id, groupId == null ? { clear_group: true } : { group_id: groupId }),
+      ),
+    )
+    const failed = results.filter((r) => r.status === 'rejected').length
+    if (failed) {
+      error.value =
+        failed === ids.length
+          ? '移入分组失败'
+          : `已移入 ${ids.length - failed} 条，另有 ${failed} 条失败`
+      await load({ silent: true })
+    } else {
+      hint.value =
+        groupId == null
+          ? `已将 ${ids.length} 条移出分组（未分组）`
+          : `已将 ${ids.length} 条移入「${groupLabel}」`
+      void load({ silent: true })
+    }
+  } catch (err) {
+    entries.value = snapshot
+    error.value = err.message
+    await load({ silent: true })
+  } finally {
+    batchMoving.value = false
+  }
+}
+
+async function confirmMoveSelected() {
+  if (batchMoving.value || !selectedIds.value.length) return
+  error.value = ''
+  try {
+    if (moveMode.value === 'new') {
+      const name = moveNewGroupName.value.trim()
+      if (!name) {
+        error.value = '请输入新组名称'
+        return
+      }
+      batchMoving.value = true
+      const g = await api.createGroup({ name })
+      if (!groups.value.some((x) => x.id === g.id)) {
+        groups.value = [...groups.value, g]
+      }
+      moveDialogOpen.value = false
+      batchMoving.value = false
+      await moveSelectedToGroup(g.id, g.name)
+      return
+    }
+    const raw = moveTargetGroupId.value
+    const groupId = raw === '' ? null : Number(raw)
+    const label =
+      groupId == null ? '未分组' : groups.value.find((g) => g.id === groupId)?.name || `分组 #${groupId}`
+    moveDialogOpen.value = false
+    await moveSelectedToGroup(groupId, label)
+  } catch (err) {
+    batchMoving.value = false
+    error.value = err.message
+  }
+}
+
+function onMoveDialogKeydown(e) {
+  if (e.key === 'Escape' && moveDialogOpen.value && !batchMoving.value) {
+    closeMoveDialog()
+  }
+}
+
 function openForm(g) {
   formGroupId.value = g.id
 }
@@ -874,5 +1049,11 @@ async function composeGroup(g) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  window.addEventListener('keydown', onMoveDialogKeydown)
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onMoveDialogKeydown)
+})
 </script>

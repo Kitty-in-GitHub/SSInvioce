@@ -480,10 +480,12 @@ def classify_confirm(body: ClassifyConfirmRequest):
             if not staged:
                 raise HTTPException(status_code=400, detail=f"unknown temp_id: {item.temp_id}")
             if item.type == "unknown":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"请为 {staged['original_name']} 指定类型后再入库",
-                )
+                # Inbox may stay unclassified; attaching to an entry still needs a type.
+                if item.entry_id is not None or (item.create_entry_title or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"请为 {staged['original_name']} 指定类型后再入库",
+                    )
 
             if item.type == invoice_slot_id():
                 feat = staged.get("features")
