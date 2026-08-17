@@ -5,7 +5,7 @@
         <div class="modal-head">
           <div>
             <h3 id="group-form-title" class="modal-title">{{ template.name || '填表' }}</h3>
-            <p class="modal-sub">表头手填；支出金额按条目归类自动汇总。预览为程序生成的 PDF（无需安装 Word），版式接近官方表。</p>
+            <p class="modal-sub">表头手填；支出金额按条目归类自动汇总。预览与拼版前置页由官方 Word 导出，本机需安装 Word、WPS 或 LibreOffice 之一。</p>
           </div>
           <div class="form-fill-head-actions">
             <label class="form-preview-toggle">
@@ -97,7 +97,7 @@
             </div>
             <p v-if="previewError" class="error">{{ previewError }}</p>
             <p v-else-if="!previewUrl && !previewing" class="meta">
-              点击「生成预览」：按当前填写内容生成 PDF（不依赖本机 Word）。下载「官方 Word」仍可用「保存并下载 Word」。
+              点击「生成预览」：先填写官方 Word 再转为 PDF（与下载的 Word / 拼版前置页一致）。本机需安装 Microsoft Word、WPS 文字或 LibreOffice 之一。
             </p>
             <div v-if="previewUrl" class="form-preview-frame-wrap">
               <iframe class="form-preview-frame" :src="previewUrl" title="表格导出预览" />

@@ -14,10 +14,10 @@ from ..services.forms import (
     FormError,
     apply_auto_reimburse,
     auto_reimburse_map,
+    filled_form_to_pdf,
     get_form_template,
     merge_form_values,
     parse_form_data,
-    render_form_pdf,
 )
 from ..services.settings_store import get_layout
 
@@ -92,7 +92,7 @@ def compose_group(group_id: int):
 
             ensure_dirs()
             pdf_path = EXPORTS_DIR / f"group_{group_id}_{DEFAULT_FORM_ID}_{stamp}.pdf"
-            prepend_pdf = render_form_pdf(template, values, pdf_path)
+            prepend_pdf = filled_form_to_pdf(template, values, pdf_path)
         except FormError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

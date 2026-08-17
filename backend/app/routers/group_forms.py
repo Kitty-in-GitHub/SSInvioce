@@ -18,12 +18,12 @@ from ..services.forms import (
     auto_reimburse_map,
     dump_form_data,
     expense_table,
+    filled_form_to_pdf,
     form_totals,
     get_form_template,
     merge_form_values,
     parse_form_data,
     render_docx,
-    render_form_pdf,
 )
 
 router = APIRouter(prefix="/api/groups", tags=["group-forms"])
@@ -201,7 +201,7 @@ def _draft_values(conn, group_id: int, body: GroupFormUpdate) -> tuple[dict, dic
 
 @router.post("/{group_id}/forms/preview-pdf")
 def preview_group_form_pdf(group_id: int, body: GroupFormUpdate):
-    """Render filled form as PDF for on-screen preview (no Microsoft Word)."""
+    """Fill official docx and export PDF via Word / WPS / LibreOffice."""
     with get_conn() as conn:
         _load_group(conn, group_id)
         values, template = _draft_values(conn, group_id, body)
@@ -211,7 +211,7 @@ def preview_group_form_pdf(group_id: int, body: GroupFormUpdate):
     ensure_dirs()
     pdf_path = EXPORTS_DIR / f"group_{group_id}_{template['id']}_preview_{stamp}.pdf"
     try:
-        out = render_form_pdf(template, values, pdf_path)
+        out = filled_form_to_pdf(template, values, pdf_path)
     except FormError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     log.info("preview form pdf group_id=%s path=%s", group_id, out)

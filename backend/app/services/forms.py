@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
+import threading
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,9 @@ log = get_logger("forms")
 
 FORM_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 DEFAULT_FORM_ID = "student_activity_budget"
+_DOCX_PDF_LOCK = threading.Lock()
+_WD_FORMAT_PDF = 17  # wdFormatPDF / wdExportFormatPDF
+_WPS_PROG_IDS = ("Kwps.Application", "wps.Application", "Ket.Application")
 
 
 class FormError(Exception):
@@ -438,7 +444,10 @@ def _cjk_font(fitz_mod: Any) -> Any:
 
 
 def render_form_pdf(template: dict[str, Any], values: dict[str, Any], dest: Path | None = None) -> Path:
-    """Draw filled form as A4 PDF with PyMuPDF — no Microsoft Word required."""
+    """Deprecated for preview/compose — prefer filled_form_to_pdf (official docx export).
+
+    Kept for offline smoke tests / emergency fallback drawing only.
+    """
     import pymupdf as fitz
 
     ensure_dirs()
@@ -579,30 +588,63 @@ def render_form_pdf(template: dict[str, Any], values: dict[str, Any], dest: Path
     return dest
 
 
-def docx_to_pdf(docx_path: Path, pdf_path: Path | None = None) -> Path:
-    """Optional Word conversion — prefer render_form_pdf for preview/compose."""
-    src = docx_path.resolve()
-    if not src.is_file():
-        raise FormError("填写后的 Word 文件不存在")
-    out = (pdf_path or src.with_suffix(".pdf")).resolve()
-    out.parent.mkdir(parents=True, exist_ok=True)
+def _pdf_ok(path: Path) -> bool:
     try:
-        import pythoncom
-        import win32com.client
-    except ImportError as exc:
-        raise FormError("未安装 pywin32，无法将表格转为 PDF。仍可下载 Word，或使用程序内 PDF 预览。") from exc
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _com_export_docx_to_pdf(prog_id: str, src: Path, out: Path) -> None:
+    """Export via Office COM (Microsoft Word or WPS). Raises on failure."""
+    import pythoncom
+    import win32com.client
+
+    if out.exists():
+        try:
+            out.unlink()
+        except OSError:
+            pass
+
     pythoncom.CoInitialize()
-    word = None
+    app = None
     doc = None
     try:
-        word = win32com.client.DispatchEx("Word.Application")
-        word.Visible = False
-        word.DisplayAlerts = 0
-        doc = word.Documents.Open(str(src), ReadOnly=True)
-        doc.SaveAs(str(out), FileFormat=17)
-    except Exception as exc:
-        log.exception("docx to pdf failed src=%s", src)
-        raise FormError(f"Word 未能将表格转为 PDF：{exc}") from exc
+        app = win32com.client.DispatchEx(prog_id)
+        try:
+            app.Visible = False
+        except Exception:
+            pass
+        try:
+            app.DisplayAlerts = 0
+        except Exception:
+            pass
+        try:
+            doc = app.Documents.Open(str(src), ReadOnly=True)
+        except TypeError:
+            doc = app.Documents.Open(str(src))
+
+        exported = False
+        try:
+            doc.ExportAsFixedFormat(str(out), _WD_FORMAT_PDF)
+            exported = _pdf_ok(out)
+        except Exception:
+            log.debug("ExportAsFixedFormat failed prog_id=%s", prog_id, exc_info=True)
+        if not exported:
+            try:
+                doc.SaveAs(str(out), FileFormat=_WD_FORMAT_PDF)
+                exported = _pdf_ok(out)
+            except Exception:
+                log.debug("SaveAs FileFormat failed prog_id=%s", prog_id, exc_info=True)
+        if not exported:
+            try:
+                doc.SaveAs(OutputFileName=str(out), FileFormat=_WD_FORMAT_PDF)
+                exported = _pdf_ok(out)
+            except Exception:
+                log.debug("SaveAs kwargs failed prog_id=%s", prog_id, exc_info=True)
+        if not exported:
+            raise RuntimeError(f"{prog_id} 未能写出有效 PDF")
+        log.info("docx to pdf via %s -> %s", prog_id, out)
     finally:
         try:
             if doc is not None:
@@ -610,14 +652,182 @@ def docx_to_pdf(docx_path: Path, pdf_path: Path | None = None) -> Path:
         except Exception:
             pass
         try:
-            if word is not None:
-                word.Quit()
+            if app is not None:
+                app.Quit()
         except Exception:
             pass
         try:
             pythoncom.CoUninitialize()
         except Exception:
             pass
-    if not out.is_file():
-        raise FormError("Word 转 PDF 未生成文件。请确认本机已安装 Microsoft Word。")
-    return out
+
+
+def _try_word_to_pdf(src: Path, out: Path) -> str | None:
+    """Return None on success, else a short error reason."""
+    try:
+        import win32com.client  # noqa: F401
+    except ImportError:
+        return "后端 Python 环境缺少 pywin32，无法调用已安装的 Word/WPS"
+    try:
+        _com_export_docx_to_pdf("Word.Application", src, out)
+        return None
+    except Exception as exc:
+        log.warning("Word COM export failed: %s", exc)
+        return str(exc)
+
+
+def _try_wps_to_pdf(src: Path, out: Path) -> str | None:
+    try:
+        import win32com.client  # noqa: F401
+    except ImportError:
+        return "后端 Python 环境缺少 pywin32，无法调用已安装的 Word/WPS"
+    errors: list[str] = []
+    for prog_id in _WPS_PROG_IDS:
+        try:
+            _com_export_docx_to_pdf(prog_id, src, out)
+            return None
+        except Exception as exc:
+            errors.append(f"{prog_id}: {exc}")
+            log.warning("WPS COM export failed prog_id=%s: %s", prog_id, exc)
+    return "; ".join(errors) if errors else "未找到 WPS"
+
+
+def _find_soffice() -> Path | None:
+    env = (os.environ.get("LIBREOFFICE_PATH") or os.environ.get("SOFFICE_PATH") or "").strip()
+    candidates: list[Path] = []
+    if env:
+        candidates.append(Path(env))
+    which = shutil.which("soffice") or shutil.which("soffice.exe")
+    if which:
+        candidates.append(Path(which))
+    candidates.extend(
+        [
+            Path(r"C:\Program Files\LibreOffice\program\soffice.exe"),
+            Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"),
+            Path("/usr/bin/soffice"),
+            Path("/usr/local/bin/soffice"),
+            Path("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+        ]
+    )
+    seen: set[str] = set()
+    for p in candidates:
+        key = str(p)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if p.is_file():
+            return p
+    return None
+
+
+def _try_libreoffice_to_pdf(src: Path, out: Path) -> str | None:
+    soffice = _find_soffice()
+    if soffice is None:
+        return "未找到 soffice（可安装 LibreOffice，或设置 LIBREOFFICE_PATH）"
+    outdir = out.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    # LibreOffice writes <stem>.pdf into --outdir
+    expected = outdir / f"{src.stem}.pdf"
+    if expected.exists() and expected.resolve() != out.resolve():
+        try:
+            expected.unlink()
+        except OSError:
+            pass
+    if out.exists():
+        try:
+            out.unlink()
+        except OSError:
+            pass
+    cmd = [
+        str(soffice),
+        "--headless",
+        "--norestore",
+        "--nolockcheck",
+        "--nodefault",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        str(outdir),
+        str(src),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "LibreOffice 转换超时"
+    except OSError as exc:
+        return f"无法启动 LibreOffice：{exc}"
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()[:400]
+        return f"LibreOffice 退出码 {proc.returncode}" + (f"：{detail}" if detail else "")
+    if expected.resolve() != out.resolve():
+        if not _pdf_ok(expected):
+            return "LibreOffice 未生成 PDF"
+        try:
+            if out.exists():
+                out.unlink()
+        except OSError:
+            pass
+        shutil.move(str(expected), str(out))
+    if not _pdf_ok(out):
+        return "LibreOffice 未生成有效 PDF"
+    log.info("docx to pdf via LibreOffice -> %s", out)
+    return None
+
+
+def docx_to_pdf(docx_path: Path, pdf_path: Path | None = None) -> Path:
+    """Convert filled docx to PDF via Word → WPS → LibreOffice cascade."""
+    src = docx_path.resolve()
+    if not src.is_file():
+        raise FormError("填写后的 Word 文件不存在")
+    out = (pdf_path or src.with_suffix(".pdf")).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    with _DOCX_PDF_LOCK:
+        attempts: list[str] = []
+        err = _try_word_to_pdf(src, out)
+        if err is None and _pdf_ok(out):
+            return out
+        attempts.append(f"Word：{err or '未生成文件'}")
+
+        err = _try_wps_to_pdf(src, out)
+        if err is None and _pdf_ok(out):
+            return out
+        attempts.append(f"WPS：{err or '未生成文件'}")
+
+        err = _try_libreoffice_to_pdf(src, out)
+        if err is None and _pdf_ok(out):
+            return out
+        attempts.append(f"LibreOffice：{err or '未生成文件'}")
+
+    detail = "；".join(attempts)
+    raise FormError(
+        "无法将官方表格转为 PDF。请安装 Microsoft Word、WPS 文字或 LibreOffice 之一后重试。"
+        f"已尝试：{detail}"
+    )
+
+
+def filled_form_to_pdf(template: dict[str, Any], values: dict[str, Any], dest: Path | None = None) -> Path:
+    """Fill official docx then convert to PDF (same layout as downloaded Word)."""
+    ensure_dirs()
+    if dest is None:
+        dest = Path(tempfile.mkstemp(suffix=".pdf", prefix="form_", dir=str(EXPORTS_DIR))[1])
+    dest = dest.resolve()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(suffix=".docx", prefix="form_", dir=str(EXPORTS_DIR))
+    os.close(fd)
+    tmp_docx = Path(tmp_name)
+    try:
+        render_docx(template, values, tmp_docx)
+        return docx_to_pdf(tmp_docx, dest)
+    finally:
+        try:
+            if tmp_docx.is_file():
+                tmp_docx.unlink()
+        except OSError:
+            pass
