@@ -95,6 +95,7 @@ Get-ChildItem -Path $OutDir -Recurse -Directory -Filter "__pycache__" -ErrorActi
 New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "data") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "data\uploads\inbox") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "data\exports") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "data\cache") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "data\logs") | Out-Null
 
 @"

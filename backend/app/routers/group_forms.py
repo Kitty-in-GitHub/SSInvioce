@@ -201,17 +201,12 @@ def _draft_values(conn, group_id: int, body: GroupFormUpdate) -> tuple[dict, dic
 
 @router.post("/{group_id}/forms/preview-pdf")
 def preview_group_form_pdf(group_id: int, body: GroupFormUpdate):
-    """Fill official docx and export PDF via Word / WPS / LibreOffice."""
+    """Fill official docx and export PDF via Word / WPS / LibreOffice (cached)."""
     with get_conn() as conn:
         _load_group(conn, group_id)
         values, template = _draft_values(conn, group_id, body)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    from ..config import EXPORTS_DIR, ensure_dirs
-
-    ensure_dirs()
-    pdf_path = EXPORTS_DIR / f"group_{group_id}_{template['id']}_preview_{stamp}.pdf"
     try:
-        out = filled_form_to_pdf(template, values, pdf_path)
+        out = filled_form_to_pdf(template, values, group_id=group_id)
     except FormError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     log.info("preview form pdf group_id=%s path=%s", group_id, out)

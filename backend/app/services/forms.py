@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,7 @@ DEFAULT_FORM_ID = "student_activity_budget"
 _DOCX_PDF_LOCK = threading.Lock()
 _WD_FORMAT_PDF = 17  # wdFormatPDF / wdExportFormatPDF
 _WPS_PROG_IDS = ("Kwps.Application", "wps.Application", "Ket.Application")
+FORM_PDF_CACHE = "form_pdf"
 
 
 class FormError(Exception):
@@ -812,22 +814,69 @@ def docx_to_pdf(docx_path: Path, pdf_path: Path | None = None) -> Path:
     )
 
 
-def filled_form_to_pdf(template: dict[str, Any], values: dict[str, Any], dest: Path | None = None) -> Path:
-    """Fill official docx then convert to PDF (same layout as downloaded Word)."""
+def form_pdf_cache_key(group_id: int, template_id: str, values: dict[str, Any]) -> str:
+    """Stable key: group_template_hash16 (prefix used to purge older hashes)."""
+    payload = json.dumps(
+        {"template_id": template_id, "values": values},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"{int(group_id)}_{template_id}_{digest}"
+
+
+def filled_form_to_pdf(
+    template: dict[str, Any],
+    values: dict[str, Any],
+    dest: Path | None = None,
+    *,
+    group_id: int | None = None,
+) -> Path:
+    """Fill official docx then convert to PDF (same layout as downloaded Word).
+
+    When ``group_id`` is set, use the unified ``form_pdf`` disk cache so unchanged
+    content skips Word/WPS/LibreOffice conversion.
+    """
     ensure_dirs()
-    if dest is None:
-        dest = Path(tempfile.mkstemp(suffix=".pdf", prefix="form_", dir=str(EXPORTS_DIR))[1])
-    dest = dest.resolve()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(suffix=".docx", prefix="form_", dir=str(EXPORTS_DIR))
-    os.close(fd)
-    tmp_docx = Path(tmp_name)
-    try:
-        render_docx(template, values, tmp_docx)
-        return docx_to_pdf(tmp_docx, dest)
-    finally:
+    template_id = str(template.get("id") or DEFAULT_FORM_ID)
+
+    def _convert_to(out: Path) -> Path:
+        out = out.resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(suffix=".docx", prefix="form_", dir=str(EXPORTS_DIR))
+        os.close(fd)
+        tmp_docx = Path(tmp_name)
         try:
-            if tmp_docx.is_file():
-                tmp_docx.unlink()
-        except OSError:
-            pass
+            render_docx(template, values, tmp_docx)
+            return docx_to_pdf(tmp_docx, out)
+        finally:
+            try:
+                if tmp_docx.is_file():
+                    tmp_docx.unlink()
+            except OSError:
+                pass
+
+    if group_id is None:
+        if dest is None:
+            dest = Path(tempfile.mkstemp(suffix=".pdf", prefix="form_", dir=str(EXPORTS_DIR))[1])
+        return _convert_to(dest)
+
+    from .cache_manager import get_registry, init_caches
+
+    init_caches()
+    key = form_pdf_cache_key(group_id, template_id, values)
+
+    def _build() -> Path:
+        fd, tmp_name = tempfile.mkstemp(suffix=".pdf", prefix="form_build_", dir=str(EXPORTS_DIR))
+        os.close(fd)
+        return _convert_to(Path(tmp_name))
+
+    cached = get_registry().get_or_build(FORM_PDF_CACHE, key, _build)
+    if dest is not None:
+        dest = dest.resolve()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.resolve() != cached.resolve():
+            shutil.copy2(cached, dest)
+        return dest
+    return cached

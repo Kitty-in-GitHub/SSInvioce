@@ -88,11 +88,7 @@ def compose_group(group_id: int):
                 merge_form_values(template, saved_form),
                 auto_reimburse_map([dict(r) for r in entry_rows], template),
             )
-            from ..config import EXPORTS_DIR, ensure_dirs
-
-            ensure_dirs()
-            pdf_path = EXPORTS_DIR / f"group_{group_id}_{DEFAULT_FORM_ID}_{stamp}.pdf"
-            prepend_pdf = filled_form_to_pdf(template, values, pdf_path)
+            prepend_pdf = filled_form_to_pdf(template, values, group_id=group_id)
         except FormError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

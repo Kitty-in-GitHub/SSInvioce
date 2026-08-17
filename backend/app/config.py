@@ -7,6 +7,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
 EXPORTS_DIR = DATA_DIR / "exports"
+CACHE_DIR = DATA_DIR / "cache"
 TEMPLATES_DIR = DATA_DIR / "templates"
 INBOX_DIR = UPLOADS_DIR / "inbox"
 BUILTIN_FORM_TEMPLATES_DIR = Path(__file__).resolve().parent / "form_templates"
@@ -20,5 +21,5 @@ API_PORT = 8765
 
 
 def ensure_dirs() -> None:
-    for path in (DATA_DIR, UPLOADS_DIR, EXPORTS_DIR, TEMPLATES_DIR, INBOX_DIR):
+    for path in (DATA_DIR, UPLOADS_DIR, EXPORTS_DIR, CACHE_DIR, TEMPLATES_DIR, INBOX_DIR):
         path.mkdir(parents=True, exist_ok=True)
