@@ -91,11 +91,10 @@
                     <span>·</span>
                     <span>{{ formatAmount(section.amountSum) }}</span>
                     <span
-                      v-if="section.group"
-                      class="chip"
-                      :class="section.group.complete ? 'chip-ok' : 'chip-warn'"
+                      v-if="section.group && !section.group.complete"
+                      class="chip chip-warn"
                     >
-                      {{ section.group.complete ? '齐套' : `缺 ${section.group.incomplete_count}` }}
+                      缺 {{ section.group.incomplete_count }}
                     </span>
                     <span v-if="section.group?.has_form" class="chip chip-ok">已填表</span>
                     <span v-else-if="section.entries.length" class="chip chip-muted">未分组</span>
@@ -164,59 +163,105 @@
 
             <div v-show="!isCollapsed(section.key)" :id="`group-body-${section.key}`" class="group-body">
               <div v-if="!section.entries.length" class="empty entry-list-empty">本组暂无条目</div>
-              <div v-else class="list entry-list">
-                <div v-for="e in section.entries" :key="e.id" class="entry-row">
-                  <label class="entry-check">
-                    <input
-                      type="checkbox"
-                      :checked="selectedIds.includes(e.id)"
-                      @change="toggleSelect(e)"
-                    />
-                  </label>
-                  <div class="entry-main">
-                    <div class="entry-title-row">
-                      <router-link class="entry-title" :to="`/entries/${e.id}`">{{ e.title }}</router-link>
-                      <span class="chip" :class="e.completeness.complete ? 'chip-ok' : 'chip-warn'">
-                        {{ e.completeness.complete ? '齐套' : `缺：${missingLabel(e.completeness.missing)}` }}
-                      </span>
-                      <span
-                        class="chip"
-                        :class="amountChipClass(e.amount_source)"
-                        :title="amountSourceHint(e.amount_source)"
+              <div v-else class="entry-table-wrap">
+                <table class="entry-table">
+                  <thead>
+                    <tr>
+                      <th class="col-check"></th>
+                      <th class="col-title">条目</th>
+                      <th
+                        v-for="slot in listSlots"
+                        :key="slot.id"
+                        class="col-slot"
+                        :title="slot.label"
                       >
-                        {{ e.amount_source === 'manual' ? '手改' : e.amount_source === 'auto' ? '自动' : '无金额' }}
-                      </span>
-                    </div>
-                    <div v-if="e.note" class="entry-note">{{ e.note }}</div>
-                  </div>
-                  <div class="amount-edit">
-                    <span class="amount-prefix" aria-hidden="true">¥</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      :value="e.amount ?? ''"
-                      placeholder="0.00"
-                      @change="onAmountChange(e, $event)"
-                    />
-                  </div>
-                  <select class="entry-group-select" :value="e.group_id ?? ''" @change="onGroupChange(e, $event)">
-                    <option value="">未分组</option>
-                    <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
-                  </select>
-                  <div class="entry-actions">
-                    <button
-                      class="link-btn link-accent"
-                      type="button"
-                      :disabled="!e.completeness.complete || composingId === e.id"
-                      @click="compose(e)"
-                    >
-                      {{ composingId === e.id ? '拼版中…' : '拼版' }}
-                    </button>
-                    <router-link class="link-btn" :to="`/entries/${e.id}`">详情</router-link>
-                    <button class="link-btn link-danger" type="button" @click="remove(e)">删除</button>
-                  </div>
-                </div>
+                        {{ slot.label }}
+                      </th>
+                      <th class="col-amount">金额</th>
+                      <th class="col-group">分组</th>
+                      <th class="col-actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="e in section.entries" :key="e.id" class="entry-row">
+                      <td class="col-check">
+                        <label class="entry-check">
+                          <input
+                            type="checkbox"
+                            :checked="selectedIds.includes(e.id)"
+                            @change="toggleSelect(e)"
+                          />
+                        </label>
+                      </td>
+                      <td class="col-title">
+                        <div class="entry-main">
+                          <div class="entry-title-row">
+                            <router-link class="entry-title" :to="`/entries/${e.id}`">{{ e.title }}</router-link>
+                          </div>
+                          <div v-if="e.note" class="entry-note">{{ e.note }}</div>
+                        </div>
+                      </td>
+                      <td
+                        v-for="slot in listSlots"
+                        :key="slot.id"
+                        class="col-slot"
+                      >
+                        <button
+                          type="button"
+                          class="slot-mark"
+                          :class="hasSlot(e, slot.id) ? 'slot-mark-ok' : 'slot-mark-miss'"
+                          :title="hasSlot(e, slot.id) ? `预览${slot.label}` : `上传${slot.label}`"
+                          :aria-label="hasSlot(e, slot.id) ? `预览${slot.label}` : `上传${slot.label}`"
+                          :disabled="uploadingKey === uploadKey(e.id, slot.id)"
+                          @click="onSlotClick(e, slot)"
+                        >
+                          {{ uploadingKey === uploadKey(e.id, slot.id) ? '…' : hasSlot(e, slot.id) ? '✓' : '✗' }}
+                        </button>
+                      </td>
+                      <td class="col-amount">
+                        <div class="amount-cell">
+                          <span
+                            class="chip"
+                            :class="amountChipClass(e.amount_source)"
+                            :title="amountSourceHint(e.amount_source)"
+                          >
+                            {{ e.amount_source === 'manual' ? '手改' : e.amount_source === 'auto' ? '自动' : '无金额' }}
+                          </span>
+                          <div class="amount-edit">
+                            <span class="amount-prefix" aria-hidden="true">¥</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              :value="e.amount ?? ''"
+                              placeholder="0.00"
+                              @change="onAmountChange(e, $event)"
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td class="col-group">
+                        <select class="entry-group-select" :value="e.group_id ?? ''" @change="onGroupChange(e, $event)">
+                          <option value="">未分组</option>
+                          <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+                        </select>
+                      </td>
+                      <td class="col-actions">
+                        <div class="entry-actions">
+                          <button
+                            class="link-btn link-accent"
+                            type="button"
+                            :disabled="!e.completeness.complete || composingId === e.id"
+                            @click="compose(e)"
+                          >
+                            {{ composingId === e.id ? '拼版中…' : '拼版' }}
+                          </button>
+                          <button class="link-btn link-danger" type="button" @click="remove(e)">删除</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </section>
@@ -247,22 +292,129 @@
       </div>
     </template>
     <GroupFormDialog :group-id="formGroupId" @close="formGroupId = null" @saved="load" />
+    <input
+      ref="slotFileInputEl"
+      type="file"
+      hidden
+      :accept="pendingUpload?.accept || ''"
+      @change="onSlotFilePicked"
+    />
+    <MaterialPreview
+      v-if="preview"
+      mode="lightbox"
+      :open="true"
+      :url="preview.url"
+      :kind="preview.kind"
+      :title="preview.title"
+      @close="preview = null"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { api, formatAmount } from '../api/client'
-import { missingLabelFromSlots, useSlots } from '../composables/useSlots'
+import { api, formatAmount, isImageMaterial, isPdfMaterial } from '../api/client'
+import { acceptForKind, useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
 import GroupFormDialog from '../components/GroupFormDialog.vue'
+import MaterialPreview from '../components/MaterialPreview.vue'
 
 const { askConfirm } = useConfirmDialog()
-const { slotLabels } = useSlots()
-function missingLabel(missing) {
-  return missingLabelFromSlots(missing, slotLabels.value)
+const { slots: slotDefs } = useSlots()
+const listSlots = computed(() => {
+  if (slotDefs.value.length) {
+    return slotDefs.value.map((s) => ({
+      id: s.id,
+      label: s.label,
+      accept: acceptForKind(s.file_kind),
+    }))
+  }
+  return [
+    { id: 'invoice', label: '发票', accept: acceptForKind('pdf') },
+    { id: 'order', label: '订单截图', accept: acceptForKind('image') },
+    { id: 'payment', label: '支付记录', accept: acceptForKind('image') },
+  ]
+})
+
+function slotMaterial(entry, slotId) {
+  return (entry.materials || []).find((m) => m.type === slotId) || null
 }
+
+function hasSlot(entry, slotId) {
+  return !!slotMaterial(entry, slotId)
+}
+
+function previewKind(m) {
+  if (isPdfMaterial(m)) return 'pdf'
+  if (isImageMaterial(m)) return 'image'
+  return 'image'
+}
+
+function uploadKey(entryId, slotId) {
+  return `${entryId}:${slotId}`
+}
+
+const preview = ref(null)
+const pendingUpload = ref(null)
+const uploadingKey = ref('')
+const slotFileInputEl = ref(null)
+
+function onSlotClick(entry, slot) {
+  const material = slotMaterial(entry, slot.id)
+  if (material) {
+    preview.value = {
+      url: material.url || api.materialFileUrl(material.id),
+      kind: previewKind(material),
+      title: `${entry.title} · ${slot.label}${material.original_name ? ` · ${material.original_name}` : ''}`,
+    }
+    return
+  }
+  pendingUpload.value = {
+    entryId: entry.id,
+    entryTitle: entry.title,
+    type: slot.id,
+    label: slot.label,
+    accept: slot.accept,
+  }
+  nextTick(() => {
+    const el = slotFileInputEl.value
+    if (el) {
+      el.value = ''
+      el.click()
+    }
+  })
+}
+
+async function onSlotFilePicked(ev) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  const target = pendingUpload.value
+  pendingUpload.value = null
+  if (!file || !target) return
+  const key = uploadKey(target.entryId, target.type)
+  uploadingKey.value = key
+  error.value = ''
+  hint.value = ''
+  try {
+    const uploaded = await api.uploadMaterial(file, {
+      entryId: target.entryId,
+      type: target.type,
+    })
+    await load()
+    hint.value = `已上传「${target.entryTitle}」的${target.label}`
+    if (uploaded?.duplicate_warning) {
+      const w = uploaded.duplicate_warning
+      const title = w.existing_entry_title || (w.existing_entry_id != null ? `#${w.existing_entry_id}` : '已有材料')
+      hint.value = `已上传${target.label}；可能与「${title}」重复，可在详情页对比`
+    }
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    uploadingKey.value = ''
+  }
+}
+
 const { openBatchUpload } = useBatchUploadDialog()
 const entries = ref([])
 const groups = ref([])

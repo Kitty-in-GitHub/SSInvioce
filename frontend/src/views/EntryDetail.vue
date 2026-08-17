@@ -5,10 +5,15 @@
         <router-link class="meta" to="/">← 返回列表</router-link>
         <h1 v-if="entry">{{ entry.title }}</h1>
         <p v-if="entry">
-          <span :class="entry.completeness.complete ? 'badge badge-ok' : 'badge badge-warn'">
-            {{ entry.completeness.complete ? '齐套' : `缺：${missingLabel(entry.completeness.missing)}` }}
+          <span
+            v-if="!entry.completeness.complete"
+            class="badge badge-warn"
+          >
+            缺：{{ missingLabel(entry.completeness.missing) }}
           </span>
-          <span v-if="entry.note" class="meta"> · {{ entry.note }}</span>
+          <span v-if="entry.note" class="meta">
+            <template v-if="!entry.completeness.complete"> · </template>{{ entry.note }}
+          </span>
         </p>
       </div>
       <div class="actions">
@@ -84,8 +89,16 @@
       </div>
 
       <div class="slots">
-        <div v-for="slot in slots" :key="slot.type" class="slot">
-          <h4>{{ slot.label }}</h4>
+        <div
+          v-for="slot in slots"
+          :key="slot.type"
+          class="slot"
+          :class="{ 'slot-missing': slot.missing }"
+        >
+          <h4>
+            {{ slot.label }}
+            <span v-if="slot.missing" class="slot-missing-tag">缺失</span>
+          </h4>
           <div class="preview">
             <MaterialPreview
               v-if="slot.material"
@@ -95,7 +108,9 @@
               :title="slot.material.original_name"
               empty-text="无法预览"
             />
-            <div v-else class="empty">尚未上传</div>
+            <div v-else class="empty" :class="{ 'empty-missing': slot.missing }">
+              {{ slot.missing ? '材料缺失' : '尚未上传' }}
+            </div>
           </div>
           <div class="meta" v-if="slot.material">{{ slot.material.original_name }}</div>
           <div class="actions">
@@ -159,16 +174,21 @@ function missingLabel(missing) {
 const slots = computed(() => {
   const mats = entry.value?.materials || []
   const pick = (type) => mats.find((m) => m.type === type) || null
+  const missingSet = new Set(entry.value?.completeness?.missing || [])
   return (slotDefs.value.length ? slotDefs.value : [
     { id: 'invoice', label: '发票', file_kind: 'pdf' },
     { id: 'order', label: '订单截图', file_kind: 'image' },
     { id: 'payment', label: '支付记录', file_kind: 'image' },
-  ]).map((s) => ({
-    type: s.id,
-    label: s.label,
-    accept: acceptForKind(s.file_kind),
-    material: pick(s.id),
-  }))
+  ]).map((s) => {
+    const material = pick(s.id)
+    return {
+      type: s.id,
+      label: s.label,
+      accept: acceptForKind(s.file_kind),
+      material,
+      missing: !material && missingSet.has(s.id),
+    }
+  })
 })
 
 const invoiceMaterial = computed(() => slots.value.find((s) => s.type === invoiceId.value)?.material || null)
