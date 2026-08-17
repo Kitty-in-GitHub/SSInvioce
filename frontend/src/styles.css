@@ -567,6 +567,11 @@ button, input, select, textarea { font: inherit; }
   flex: none;
 }
 
+.help-page {
+  padding: 1.15rem 1.25rem 1.35rem;
+  display: grid;
+  gap: 1.15rem;
+}
 .help-dialog {
   max-height: min(90vh, 760px);
   display: flex;

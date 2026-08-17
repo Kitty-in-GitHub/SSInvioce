@@ -5,12 +5,7 @@
         <h1>设置</h1>
         <p>外观主题、槽位、拼版画板、分类关键词与公文表</p>
       </div>
-      <div class="page-head-actions">
-        <button class="btn" type="button" @click="helpOpen = true">使用帮助</button>
-      </div>
     </div>
-
-    <HelpDialog :open="helpOpen" @close="helpOpen = false" />
 
     <div class="settings-tabs" role="tablist">
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'appearance'" :class="{ active: tab === 'appearance' }" @click="tab = 'appearance'">外观</button>
@@ -327,13 +322,11 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api/client'
-import HelpDialog from '../components/HelpDialog.vue'
 import { loadSlots } from '../composables/useSlots'
 import { useTheme } from '../composables/useTheme'
 
 const route = useRoute()
 const { themeId, presets: themePresets, setTheme } = useTheme()
-const helpOpen = ref(false)
 const tab = ref(
   ['appearance', 'layout', 'keywords', 'forms'].includes(route.query.tab) ? route.query.tab : 'slots',
 )
