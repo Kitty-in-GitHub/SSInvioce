@@ -531,8 +531,9 @@ const sections = computed(() => {
   return result
 })
 
-async function load() {
-  loading.value = true
+async function load({ silent } = {}) {
+  const useSilent = silent ?? (entries.value.length > 0 || groups.value.length > 0)
+  if (!useSilent) loading.value = true
   error.value = ''
   try {
     ;[entries.value, groups.value] = await Promise.all([api.listEntries(), api.listGroups()])
@@ -541,7 +542,7 @@ async function load() {
   } catch (e) {
     error.value = e.message
   } finally {
-    loading.value = false
+    if (!useSilent) loading.value = false
   }
 }
 
@@ -726,11 +727,17 @@ async function remove(e) {
     danger: true,
   })
   if (!ok) return
+  const snapshot = entries.value
+  const prevSelected = selectedIds.value
+  entries.value = entries.value.filter((x) => x.id !== e.id)
+  selectedIds.value = selectedIds.value.filter((id) => id !== e.id)
+  error.value = ''
   try {
     await api.deleteEntry(e.id)
-    selectedIds.value = selectedIds.value.filter((id) => id !== e.id)
-    await load()
+    void load({ silent: true })
   } catch (err) {
+    entries.value = snapshot
+    selectedIds.value = prevSelected
     error.value = err.message
   }
 }
@@ -798,19 +805,31 @@ async function removeSelected() {
     danger: true,
   })
   if (!ok) return
+  const idSet = new Set(ids)
+  const snapshot = entries.value
+  const prevSelected = selectedIds.value
+  entries.value = entries.value.filter((e) => !idSet.has(e.id))
+  selectedIds.value = []
   batchDeleting.value = true
   error.value = ''
   hint.value = ''
   try {
-    for (const id of ids) {
-      await api.deleteEntry(id)
+    const results = await Promise.allSettled(ids.map((id) => api.deleteEntry(id)))
+    const failed = results.filter((r) => r.status === 'rejected').length
+    if (failed) {
+      error.value = failed === ids.length
+        ? '删除失败'
+        : `已删除 ${ids.length - failed} 条，另有 ${failed} 条失败`
+      await load({ silent: true })
+    } else {
+      hint.value = `已删除 ${ids.length} 条`
+      void load({ silent: true })
     }
-    selectedIds.value = []
-    await load()
-    hint.value = `已删除 ${ids.length} 条`
   } catch (err) {
+    entries.value = snapshot
+    selectedIds.value = prevSelected
     error.value = err.message
-    await load()
+    await load({ silent: true })
   } finally {
     batchDeleting.value = false
   }

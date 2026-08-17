@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from ..db import get_conn, now_iso, row_to_dict
 from ..logging_config import get_logger
@@ -195,7 +195,7 @@ def reparse_amount(entry_id: int, body: ReparseAmountRequest | None = None):
 
 
 @router.delete("/{entry_id}")
-def delete_entry(entry_id: int):
+def delete_entry(entry_id: int, background_tasks: BackgroundTasks):
     with get_conn() as conn:
         mats = conn.execute(
             "SELECT stored_path FROM materials WHERE entry_id = ?",
@@ -204,6 +204,7 @@ def delete_entry(entry_id: int):
         cur = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="entry not found")
-    delete_stored_files([m["stored_path"] for m in mats])
+    paths = [m["stored_path"] for m in mats]
+    background_tasks.add_task(delete_stored_files, paths)
     log.info("deleted entry id=%s materials=%s", entry_id, len(mats))
     return {"ok": True}
