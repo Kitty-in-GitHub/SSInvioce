@@ -217,39 +217,23 @@ export const api = {
     const filename = decodeURIComponent(match?.[1] || match?.[2] || `group_${groupId}.docx`)
     return { blob, filename }
   },
-  uploadFormDocx: (templateId, file) => {
-    const fd = new FormData()
-    fd.append('file', file)
-    return request(`/api/settings/forms/${templateId}/docx`, { method: 'POST', body: fd })
-  },
-  resetFormTemplate: (templateId) =>
-    request(`/api/settings/forms/${templateId}/reset`, { method: 'POST' }),
-  resetFormDocx: (templateId) =>
-    request(`/api/settings/forms/${templateId}/docx`, { method: 'DELETE' }),
-  getGroupForm: (id) => request(`/api/groups/${id}/forms`),
-  saveGroupForm: (id, payload) =>
-    request(`/api/groups/${id}/forms`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-  downloadGroupFormDocx: async (groupId) => {
+  previewGroupFormPdf: async (groupId, payload) => {
     let res
     try {
-      res = await fetch(`/api/groups/${groupId}/forms/docx`, { method: 'POST' })
+      res = await fetch(`/api/groups/${groupId}/forms/preview-pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      })
     } catch (e) {
-      throw new Error(`无法连接后端下载表格：${e.message}`)
+      throw new Error(`无法连接后端生成预览：${e.message}`)
     }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       const detail = data.detail ?? res.statusText
-      throw new Error(await formatDetail(detail) || res.statusText)
+      throw new Error((await formatDetail(detail)) || res.statusText)
     }
-    const blob = await res.blob()
-    const disposition = res.headers.get('content-disposition') || ''
-    const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition)
-    const filename = decodeURIComponent(match?.[1] || match?.[2] || `group_${groupId}.docx`)
-    return { blob, filename }
+    return res.blob()
   },
   uploadFormDocx: (templateId, file) => {
     const fd = new FormData()

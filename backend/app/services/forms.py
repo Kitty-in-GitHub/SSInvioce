@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tempfile
 from copy import deepcopy
@@ -340,12 +341,14 @@ def merge_form_values(template: dict[str, Any], saved: Any) -> dict[str, Any]:
 
 
 def apply_auto_reimburse(values: dict[str, Any], auto_map: dict[str, float]) -> dict[str, Any]:
+    """Force amount & reimburse from assigned entry sums (no manual override)."""
     out = deepcopy(values)
     for rid, row in out["rows"].items():
-        if row.get("reimburse_manual"):
-            continue
         auto = auto_map.get(rid)
-        row["reimburse"] = _money_text(auto) if auto else ""
+        text = _money_text(auto) if auto else ""
+        row["amount"] = text
+        row["reimburse"] = text
+        row["reimburse_manual"] = False
     return out
 
 
@@ -419,7 +422,165 @@ def render_docx(template: dict[str, Any], values: dict[str, Any], dest: Path | N
     return dest
 
 
+def _cjk_font(fitz_mod: Any) -> Any:
+    """Prefer local Windows CJK fonts; fall back to PyMuPDF built-in china-s."""
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    candidates = ("msyh.ttc", "msyh.ttf", "simhei.ttf", "simsun.ttc", "simkai.ttf")
+    for name in candidates:
+        p = windir / "Fonts" / name
+        if not p.is_file():
+            continue
+        try:
+            return fitz_mod.Font(fontfile=str(p))
+        except Exception:
+            log.debug("skip CJK font %s", p, exc_info=True)
+    return fitz_mod.Font("china-s")
+
+
+def render_form_pdf(template: dict[str, Any], values: dict[str, Any], dest: Path | None = None) -> Path:
+    """Draw filled form as A4 PDF with PyMuPDF — no Microsoft Word required."""
+    import pymupdf as fitz
+
+    ensure_dirs()
+    if dest is None:
+        dest = Path(tempfile.mkstemp(suffix=".pdf", prefix="form_", dir=str(EXPORTS_DIR))[1])
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    page_w, page_h = 595.0, 842.0
+    margin_x, margin_top = 40.0, 36.0
+    doc = fitz.open()
+    page = doc.new_page(width=page_w, height=page_h)
+    font = _cjk_font(fitz)
+    tw = fitz.TextWriter(page.rect)
+
+    fields = values.get("fields") or {}
+    title = str(template.get("name") or "表格")
+    y = margin_top
+    content_w = page_w - 2 * margin_x
+
+    def text(x: float, yy: float, s: str, size: float = 10) -> None:
+        tw.append((x, yy), s or "", font=font, fontsize=size)
+
+    def draw_box(x0: float, y0: float, x1: float, y1: float) -> None:
+        page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=(0.15, 0.15, 0.15), width=0.6)
+
+    # Title
+    title_w = font.text_length(title, fontsize=16)
+    text(margin_x + max(0, (content_w - title_w) / 2), y + 14, title, size=16)
+    y += 28
+
+    # Header line: fund + date
+    fund = str(fields.get("fund_code") or "")
+    year = str(fields.get("year") or "")
+    month = str(fields.get("month") or "")
+    day = str(fields.get("day") or "")
+    header = f"经费项目号码：{fund}　　时间：{year} 年 {month} 月 {day} 日"
+    text(margin_x, y + 11, header, size=10)
+    y += 20
+
+    # Field pairs table (activity info)
+    pair_ids = [
+        ("activity_name", None),
+        ("organizer", "participants"),
+        ("activity_date", "contestants"),
+        ("location", "winners"),
+    ]
+    label_of = {f["id"]: f["label"] for f in template.get("fields") or []}
+    row_h = 22.0
+    label_w = 88.0
+    for left_id, right_id in pair_ids:
+        if left_id not in label_of and left_id not in fields:
+            continue
+        if right_id is None:
+            draw_box(margin_x, y, margin_x + label_w, y + row_h)
+            draw_box(margin_x + label_w, y, margin_x + content_w, y + row_h)
+            text(margin_x + 4, y + 15, label_of.get(left_id, left_id), size=9)
+            text(margin_x + label_w + 4, y + 15, str(fields.get(left_id) or ""), size=10)
+            y += row_h
+        else:
+            mid = margin_x + content_w / 2
+            draw_box(margin_x, y, margin_x + label_w, y + row_h)
+            draw_box(margin_x + label_w, y, mid, y + row_h)
+            text(margin_x + 4, y + 15, label_of.get(left_id, left_id), size=9)
+            text(margin_x + label_w + 4, y + 15, str(fields.get(left_id) or ""), size=10)
+            draw_box(mid, y, mid + label_w, y + row_h)
+            draw_box(mid + label_w, y, margin_x + content_w, y + row_h)
+            text(mid + 4, y + 15, label_of.get(right_id, right_id), size=9)
+            text(mid + label_w + 4, y + 15, str(fields.get(right_id) or ""), size=10)
+            y += row_h
+
+    shown = {"fund_code", "year", "month", "day"}
+    for left_id, right_id in pair_ids:
+        shown.add(left_id)
+        if right_id:
+            shown.add(right_id)
+    extra = [f for f in template.get("fields") or [] if f["id"] not in shown]
+    for f in extra:
+        draw_box(margin_x, y, margin_x + label_w, y + row_h)
+        draw_box(margin_x + label_w, y, margin_x + content_w, y + row_h)
+        text(margin_x + 4, y + 15, f["label"], size=9)
+        text(margin_x + label_w + 4, y + 15, str(fields.get(f["id"]) or ""), size=10)
+        y += row_h
+
+    y += 8
+    tbl = expense_table(template)
+    col_w = [content_w * 0.34, content_w * 0.18, content_w * 0.18, content_w * 0.30]
+    headers = ["支出内容", "金额", "核销金额", "备注"]
+    exp_h = 18.0
+
+    def col_x(i: int) -> float:
+        return margin_x + sum(col_w[:i])
+
+    for i, h in enumerate(headers):
+        x0 = col_x(i)
+        draw_box(x0, y, x0 + col_w[i], y + exp_h)
+        text(x0 + 3, y + 13, h, size=9)
+    y += exp_h
+
+    row_vals = values.get("rows") or {}
+    for row in (tbl["rows"] if tbl else []):
+        saved = row_vals.get(row["id"]) or {}
+        cells = [
+            str(row.get("label") or row["id"]),
+            str(saved.get("amount") or ""),
+            str(saved.get("reimburse") or ""),
+            str(saved.get("remark") or ""),
+        ]
+        for i, cell in enumerate(cells):
+            x0 = col_x(i)
+            draw_box(x0, y, x0 + col_w[i], y + exp_h)
+            s = cell
+            if len(s) > 28:
+                s = s[:27] + "…"
+            text(x0 + 3, y + 13, s, size=9)
+        y += exp_h
+        if y > page_h - 70:
+            break
+
+    totals = form_totals(values)
+    cells = ["合计", totals["amount"], totals["reimburse"], ""]
+    for i, cell in enumerate(cells):
+        x0 = col_x(i)
+        draw_box(x0, y, x0 + col_w[i], y + exp_h)
+        text(x0 + 3, y + 13, cell, size=9)
+    y += exp_h + 16
+
+    text(margin_x, y + 12, "院系（单位）负责人（签字）：　　　　　　经办人（签字）：", size=10)
+    y += 22
+    text(margin_x, y + 12, "（公章）：", size=10)
+    y += 22
+    text(margin_x, y + 12, "备注：附活动方案（或通知）、活动总结或新闻稿等相关材料。", size=9)
+
+    tw.write_text(page)
+    doc.subset_fonts()
+    doc.save(dest, garbage=4, deflate=True)
+    doc.close()
+    log.info("render form pdf template=%s path=%s", template.get("id"), dest)
+    return dest
+
+
 def docx_to_pdf(docx_path: Path, pdf_path: Path | None = None) -> Path:
+    """Optional Word conversion — prefer render_form_pdf for preview/compose."""
     src = docx_path.resolve()
     if not src.is_file():
         raise FormError("填写后的 Word 文件不存在")
@@ -429,7 +590,7 @@ def docx_to_pdf(docx_path: Path, pdf_path: Path | None = None) -> Path:
         import pythoncom
         import win32com.client
     except ImportError as exc:
-        raise FormError("未安装 pywin32，无法将表格转为 PDF。仍可下载 Word。") from exc
+        raise FormError("未安装 pywin32，无法将表格转为 PDF。仍可下载 Word，或使用程序内 PDF 预览。") from exc
     pythoncom.CoInitialize()
     word = None
     doc = None
@@ -438,7 +599,6 @@ def docx_to_pdf(docx_path: Path, pdf_path: Path | None = None) -> Path:
         word.Visible = False
         word.DisplayAlerts = 0
         doc = word.Documents.Open(str(src), ReadOnly=True)
-        # 17 = wdFormatPDF
         doc.SaveAs(str(out), FileFormat=17)
     except Exception as exc:
         log.exception("docx to pdf failed src=%s", src)

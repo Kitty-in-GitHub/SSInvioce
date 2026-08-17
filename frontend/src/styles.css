@@ -461,6 +461,38 @@ button, input, select, textarea { font: inherit; }
 .form-fill-card {
   width: min(980px, 100%);
 }
+.form-fill-card.form-fill-with-preview {
+  width: min(1180px, 100%);
+}
+.form-fill-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+.form-preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.88rem;
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.form-fill-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.form-fill-with-preview .form-fill-layout {
+  grid-template-columns: minmax(0, 1.05fr) minmax(16rem, 0.9fr);
+}
+@media (max-width: 900px) {
+  .form-fill-with-preview .form-fill-layout {
+    grid-template-columns: 1fr;
+  }
+}
 .form-fill-h {
   margin: 1rem 0 0.5rem;
   font-size: 0.95rem;
@@ -496,6 +528,10 @@ button, input, select, textarea { font: inherit; }
 .form-fill-money {
   width: 6.5rem;
 }
+.form-fill-money-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .form-fill-assigned {
   min-width: 8rem;
 }
@@ -525,6 +561,35 @@ button, input, select, textarea { font: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.form-preview-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 28rem;
+}
+.form-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.form-preview-frame-wrap {
+  flex: 1;
+  min-height: 26rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #5a6474;
+}
+.form-preview-frame {
+  display: block;
+  width: 100%;
+  height: min(70vh, 720px);
+  border: 0;
+  background: #525659;
 }
 .form-template-editor {
   padding: 0.85rem 0;

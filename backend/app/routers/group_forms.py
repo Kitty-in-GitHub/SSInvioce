@@ -23,6 +23,7 @@ from ..services.forms import (
     merge_form_values,
     parse_form_data,
     render_docx,
+    render_form_pdf,
 )
 
 router = APIRouter(prefix="/api/groups", tags=["group-forms"])
@@ -111,16 +112,11 @@ def save_group_form(group_id: int, body: GroupFormUpdate):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     tbl = expense_table(template)
     valid_rows = {r["id"] for r in (tbl["rows"] if tbl else [])}
-    rows_out: dict[str, dict] = {}
-    for rid, row in body.rows.items():
-        if rid not in valid_rows:
-            continue
-        rows_out[rid] = {
-            "amount": row.amount if row.amount is not None else "",
-            "reimburse": row.reimburse if row.reimburse is not None else "",
-            "remark": row.remark or "",
-            "reimburse_manual": bool(row.reimburse_manual),
-        }
+    remark_by_row = {
+        rid: (row.remark or "")
+        for rid, row in body.rows.items()
+        if rid in valid_rows
+    }
     fields_out = {}
     valid_fields = {f["id"] for f in template.get("fields") or []}
     for fid, val in body.fields.items():
@@ -128,12 +124,6 @@ def save_group_form(group_id: int, body: GroupFormUpdate):
             fields_out[fid] = "" if val is None else str(val)
     with get_conn() as conn:
         group = _load_group(conn, group_id)
-        data = parse_form_data(group.get("form_data"))
-        data[template["id"]] = {"fields": fields_out, "rows": rows_out}
-        conn.execute(
-            "UPDATE groups SET form_data = ?, updated_at = ? WHERE id = ?",
-            (dump_form_data(data), now_iso(), group_id),
-        )
         entry_ids = {e["id"] for e in _group_entries(conn, group_id)}
         for eid, rid in body.entry_rows.items():
             if eid not in entry_ids:
@@ -145,8 +135,92 @@ def save_group_form(group_id: int, body: GroupFormUpdate):
                 "UPDATE entries SET expense_row = ?, updated_at = ? WHERE id = ?",
                 (row_id, now_iso(), eid),
             )
+        entries = _group_entries(conn, group_id)
+        auto_map = auto_reimburse_map(entries, template)
+        draft = {"fields": fields_out, "rows": {}}
+        for row_def in tbl["rows"] if tbl else []:
+            rid = row_def["id"]
+            draft["rows"][rid] = {
+                "amount": "",
+                "reimburse": "",
+                "remark": remark_by_row.get(rid, row_def.get("remark") or ""),
+                "reimburse_manual": False,
+            }
+        draft = apply_auto_reimburse(draft, auto_map)
+        data = parse_form_data(group.get("form_data"))
+        data[template["id"]] = {"fields": fields_out, "rows": draft["rows"]}
+        conn.execute(
+            "UPDATE groups SET form_data = ?, updated_at = ? WHERE id = ?",
+            (dump_form_data(data), now_iso(), group_id),
+        )
         log.info("saved group form group_id=%s template=%s", group_id, template["id"])
         return _form_payload(conn, group_id, template["id"])
+
+
+def _draft_values(conn, group_id: int, body: GroupFormUpdate) -> tuple[dict, dict]:
+    tid = body.template_id or DEFAULT_FORM_ID
+    try:
+        template = get_form_template(tid)
+    except FormError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    tbl = expense_table(template)
+    valid_rows = {r["id"] for r in (tbl["rows"] if tbl else [])}
+    valid_fields = {f["id"] for f in template.get("fields") or []}
+    fields_out = {
+        fid: ("" if val is None else str(val))
+        for fid, val in body.fields.items()
+        if fid in valid_fields
+    }
+    for f in template.get("fields") or []:
+        fields_out.setdefault(f["id"], "")
+    remark_by_row = {
+        rid: (row.remark or "")
+        for rid, row in body.rows.items()
+        if rid in valid_rows
+    }
+    entries = _group_entries(conn, group_id)
+    for e in entries:
+        if e["id"] in body.entry_rows:
+            rid = body.entry_rows[e["id"]]
+            rid = (rid or "").strip() or None
+            if rid and rid not in valid_rows:
+                rid = None
+            e["expense_row"] = rid
+    auto_map = auto_reimburse_map(entries, template)
+    draft = {"fields": fields_out, "rows": {}}
+    for row_def in tbl["rows"] if tbl else []:
+        rid = row_def["id"]
+        draft["rows"][rid] = {
+            "amount": "",
+            "reimburse": "",
+            "remark": remark_by_row.get(rid, row_def.get("remark") or ""),
+            "reimburse_manual": False,
+        }
+    return apply_auto_reimburse(draft, auto_map), template
+
+
+@router.post("/{group_id}/forms/preview-pdf")
+def preview_group_form_pdf(group_id: int, body: GroupFormUpdate):
+    """Render filled form as PDF for on-screen preview (no Microsoft Word)."""
+    with get_conn() as conn:
+        _load_group(conn, group_id)
+        values, template = _draft_values(conn, group_id, body)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    from ..config import EXPORTS_DIR, ensure_dirs
+
+    ensure_dirs()
+    pdf_path = EXPORTS_DIR / f"group_{group_id}_{template['id']}_preview_{stamp}.pdf"
+    try:
+        out = render_form_pdf(template, values, pdf_path)
+    except FormError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("preview form pdf group_id=%s path=%s", group_id, out)
+    return FileResponse(
+        out,
+        media_type="application/pdf",
+        filename=f"{template['name']}_预览.pdf",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/{group_id}/forms/docx")
