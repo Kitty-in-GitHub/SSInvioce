@@ -9,9 +9,9 @@
     </template>
     <template v-else-if="kind === 'pdf' && url">
       <template v-if="mode === 'detail'">
-        <iframe class="pdf-frame" :src="url" :title="title || 'PDF 预览'" />
+        <iframe class="pdf-frame" :src="pdfSrc" :title="title || 'PDF 预览'" />
         <div class="material-preview-actions">
-          <a class="link-btn" :href="url" target="_blank" rel="noopener">新窗口打开</a>
+          <a class="link-btn" :href="pdfSrc" target="_blank" rel="noopener">新窗口打开</a>
         </div>
       </template>
       <button v-else type="button" class="pdf-thumb" @click="openLightbox">
@@ -30,13 +30,13 @@
             <h3 class="modal-title">{{ title || '预览' }}</h3>
           </div>
           <div class="material-preview-modal-actions">
-            <a v-if="url" class="link-btn" :href="url" target="_blank" rel="noopener">新窗口打开</a>
+            <a v-if="url" class="link-btn" :href="pdfSrc" target="_blank" rel="noopener">新窗口打开</a>
             <button class="btn-ghost" type="button" @click="closeLightbox">关闭</button>
           </div>
         </div>
         <div class="material-preview-modal-body">
           <img v-if="kind === 'image'" class="material-preview-modal-img" :src="url" :alt="title" />
-          <iframe v-else class="pdf-frame pdf-frame-modal" :src="url" :title="title || 'PDF 预览'" />
+          <iframe v-else class="pdf-frame pdf-frame-modal" :src="pdfSrc" :title="title || 'PDF 预览'" />
         </div>
       </div>
     </div>
@@ -45,6 +45,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { pdfEmbedSrc } from '../api/client'
 
 const props = defineProps({
   url: { type: String, default: '' },
@@ -59,6 +60,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'update:open'])
 
 const lightboxOpen = ref(false)
+const pdfSrc = computed(() => (props.kind === 'pdf' ? pdfEmbedSrc(props.url) : props.url))
 
 const canOpenLightbox = computed(
   () => !!props.url && (props.kind === 'image' || (props.kind === 'pdf' && props.mode === 'compact')),

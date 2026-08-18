@@ -187,7 +187,7 @@
               <h3 class="modal-title">{{ slotPreview.title || '预览' }}</h3>
             </div>
             <div class="material-preview-modal-actions">
-              <a class="link-btn" :href="slotPreview.url" target="_blank" rel="noopener">新窗口打开</a>
+              <a class="link-btn" :href="pdfPreviewSrc(slotPreview.url)" target="_blank" rel="noopener">新窗口打开</a>
               <button class="btn-ghost" type="button" @click="closeSlotPreview">关闭</button>
             </div>
           </div>
@@ -201,7 +201,7 @@
             <iframe
               v-else
               class="pdf-frame pdf-frame-modal"
-              :src="slotPreview.url"
+              :src="pdfPreviewSrc(slotPreview.url)"
               :title="slotPreview.title || 'PDF 预览'"
             />
           </div>
@@ -230,7 +230,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api } from '../api/client'
+import { api, pdfEmbedSrc } from '../api/client'
 import { useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import InvoiceDupCompare from './InvoiceDupCompare.vue'
@@ -264,6 +264,10 @@ const TYPE_LABELS = computed(() => ({ unknown: '未分类', ...slotLabels.value 
 
 function isPdfName(name) {
   return /\.pdf$/i.test(name || '')
+}
+
+function pdfPreviewSrc(url) {
+  return slotPreview.value?.kind === 'pdf' ? pdfEmbedSrc(url) : url
 }
 
 function previewKindFromNameMime(name, mime) {

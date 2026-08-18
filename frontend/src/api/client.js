@@ -290,3 +290,10 @@ export function isPdfMaterial(m) {
   const name = m.original_name || m.name || ''
   return (m.mime || '').toLowerCase() === 'application/pdf' || /\.pdf$/i.test(name)
 }
+
+/** Chrome/Edge 内置阅读器：发票 PDF 常带 XML 附件，默认会弹出附件侧栏挡住预览。 */
+export function pdfEmbedSrc(url) {
+  if (!url) return url
+  if (/(?:^|[?#&])(?:navpanes|pagemode)=/i.test(url)) return url
+  return `${url}${url.includes('#') ? '&' : '#'}navpanes=0`
+}
