@@ -89,6 +89,7 @@ const navItems = [
   { to: '/', label: '条目', icon: '☰', match: ['/', '/entries'] },
   { to: '/inbox', label: '收件箱', icon: '▢' },
   { to: '/ledger', label: '记账', icon: '¥' },
+  { to: '/assets', label: '物资', icon: '▣' },
 ]
 const helpNav = { to: '/help', label: '使用帮助', icon: '?' }
 const settingsNav = { to: '/settings', label: '设置', icon: '⚙' }

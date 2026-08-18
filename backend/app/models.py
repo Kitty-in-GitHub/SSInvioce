@@ -234,3 +234,60 @@ class LedgerSummary(BaseModel):
 
 class ReparseAmountRequest(BaseModel):
     force: bool = False
+
+
+AssetKind = Literal["durable", "consumable"]
+AssetAction = Literal["in", "out", "borrow", "return", "adjust"]
+
+
+class AssetOut(BaseModel):
+    id: int
+    kind: AssetKind
+    name: str
+    qty: float
+    unit: str
+    location: str
+    note: str
+    entry_id: Optional[int] = None
+    entry_title: Optional[str] = None
+    borrowed_qty: float = 0.0
+    created_at: str
+    updated_at: str
+
+
+class AssetCreate(BaseModel):
+    kind: AssetKind
+    name: str = Field(min_length=1, max_length=200)
+    qty: float = 0
+    unit: str = ""
+    location: str = ""
+    note: str = ""
+    entry_id: Optional[int] = None
+
+
+class AssetUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    unit: Optional[str] = None
+    location: Optional[str] = None
+    note: Optional[str] = None
+    entry_id: Optional[int] = None
+    clear_entry: bool = False
+
+
+class AssetTxnOut(BaseModel):
+    id: int
+    asset_id: int
+    action: AssetAction
+    qty: float
+    person: str
+    occurred_on: str
+    note: str
+    created_at: str
+
+
+class AssetTxnCreate(BaseModel):
+    action: AssetAction
+    qty: float = 1
+    person: str = ""
+    occurred_on: Optional[str] = None
+    note: str = ""

@@ -305,6 +305,30 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteLedgerCategory: (id) => request(`/api/ledger/categories/${id}`, { method: 'DELETE' }),
+  listAssets: (kind) => {
+    const q = kind ? `?kind=${encodeURIComponent(kind)}` : ''
+    return request(`/api/assets${q}`)
+  },
+  createAsset: (body) =>
+    request('/api/assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  updateAsset: (id, body) =>
+    request(`/api/assets/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteAsset: (id) => request(`/api/assets/${id}`, { method: 'DELETE' }),
+  listAssetTxns: (id) => request(`/api/assets/${id}/txns`),
+  createAssetTxn: (id, body) =>
+    request(`/api/assets/${id}/txns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 }
 
 export function formatAmount(val) {

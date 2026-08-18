@@ -88,6 +88,35 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ledger_txns_occurred ON ledger_txns(occurred_on, id);
             CREATE INDEX IF NOT EXISTS idx_ledger_txns_group ON ledger_txns(group_id);
             CREATE INDEX IF NOT EXISTS idx_ledger_txns_category ON ledger_txns(category_id);
+
+            CREATE TABLE IF NOT EXISTS assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                qty REAL NOT NULL DEFAULT 0,
+                unit TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                entry_id INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS asset_txns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                qty REAL NOT NULL,
+                person TEXT NOT NULL DEFAULT '',
+                occurred_on TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
+            CREATE INDEX IF NOT EXISTS idx_asset_txns_asset ON asset_txns(asset_id, id);
             """
         )
         _ensure_column(conn, "entries", "group_id", "INTEGER")
