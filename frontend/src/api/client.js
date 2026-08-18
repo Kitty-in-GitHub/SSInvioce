@@ -305,6 +305,29 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteLedgerCategory: (id) => request(`/api/ledger/categories/${id}`, { method: 'DELETE' }),
+  downloadBackup: async () => {
+    let res
+    try {
+      res = await fetch('/api/backup')
+    } catch (e) {
+      throw new Error(`无法连接后端下载备份：${e.message}`)
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const detail = data.detail ?? res.statusText
+      throw new Error((await formatDetail(detail)) || res.statusText)
+    }
+    const blob = await res.blob()
+    const disposition = res.headers.get('content-disposition') || ''
+    const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition)
+    const filename = decodeURIComponent(match?.[1] || match?.[2] || '报销助手备份.zip')
+    return { blob, filename }
+  },
+  restoreBackup: async (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request('/api/backup/restore', { method: 'POST', body: fd })
+  },
   listAssets: (kind) => {
     const q = kind ? `?kind=${encodeURIComponent(kind)}` : ''
     return request(`/api/assets${q}`)

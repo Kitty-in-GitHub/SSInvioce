@@ -659,7 +659,8 @@ button, input, select, textarea { font: inherit; }
   border-color: var(--danger);
   color: var(--on-accent);
 }
-.btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.btn:disabled,
+label.btn.disabled { opacity: 0.55; cursor: not-allowed; transform: none; pointer-events: none; }
 .btn-sm {
   padding: 0.35rem 0.7rem;
   border-radius: 8px;

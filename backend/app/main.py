@@ -11,7 +11,7 @@ from .config import FRONTEND_DIST, ensure_dirs
 from .db import init_db
 from .logging_config import get_logger, setup_logging
 from .middleware import RequestLogMiddleware
-from .routers import assets, classify, compose, entries, group_compose, group_forms, groups, ledger, materials, settings
+from .routers import assets, backup, classify, compose, entries, group_compose, group_forms, groups, ledger, materials, settings
 
 SERVICE_NAME = "star-invoice-helper"
 SERVICE_VERSION = "0.1.0"
@@ -62,6 +62,7 @@ app.include_router(group_forms.router)
 app.include_router(group_compose.router)
 app.include_router(ledger.router)
 app.include_router(assets.router)
+app.include_router(backup.router)
 app.include_router(settings.router)
 
 

@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h1>设置</h1>
-        <p>外观主题、槽位、拼版画板、分类关键词、公文表与记账科目</p>
+        <p>外观主题、槽位、拼版画板、分类关键词、公文表、记账科目与数据备份</p>
       </div>
     </div>
 
@@ -14,11 +14,12 @@
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'keywords'" :class="{ active: tab === 'keywords' }" @click="tab = 'keywords'">分类关键词</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'forms'" :class="{ active: tab === 'forms' }" @click="tab = 'forms'">表格</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'ledger'" :class="{ active: tab === 'ledger' }" @click="tab = 'ledger'">记账科目</button>
+      <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'data'" :class="{ active: tab === 'data' }" @click="tab = 'data'">数据</button>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="msg" class="okmsg">{{ msg }}</p>
-    <div v-if="loading && tab !== 'appearance'" class="meta">加载中…</div>
+    <div v-if="loading && tab !== 'appearance' && tab !== 'data'" class="meta">加载中…</div>
 
     <section v-show="tab === 'appearance'" class="settings-panel card" role="tabpanel">
       <p class="meta settings-lead">选择一套预设主题。仅影响本机界面配色，立即生效并记住选择。</p>
@@ -377,6 +378,22 @@
         </div>
       </div>
     </section>
+
+    <section v-show="tab === 'data'" class="settings-panel card" role="tabpanel">
+      <p class="meta settings-lead">
+        备份包含数据库、上传材料、设置与用户 Word 模板，用于换电脑或 U 盘交接。
+        不含拼版导出文件、预览缓存、日志，也不含界面主题（主题只存在本机浏览器）。
+      </p>
+      <div class="actions settings-actions">
+        <button class="btn btn-primary" type="button" :disabled="backupBusy || restoreBusy" @click="downloadBackup">
+          {{ backupBusy ? '打包中…' : '下载备份' }}
+        </button>
+        <label class="btn" :class="{ disabled: backupBusy || restoreBusy }">
+          {{ restoreBusy ? '恢复中…' : '从备份恢复' }}
+          <input type="file" accept=".zip" hidden :disabled="backupBusy || restoreBusy" @change="onRestoreFile" />
+        </label>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -392,10 +409,12 @@ const route = useRoute()
 const { themeId, presets: themePresets, setTheme } = useTheme()
 const { askConfirm } = useConfirmDialog()
 const tab = ref(
-  ['appearance', 'layout', 'keywords', 'forms', 'ledger'].includes(route.query.tab) ? route.query.tab : 'slots',
+  ['appearance', 'layout', 'keywords', 'forms', 'ledger', 'data'].includes(route.query.tab) ? route.query.tab : 'slots',
 )
 const loading = ref(true)
 const saving = ref(false)
+const backupBusy = ref(false)
+const restoreBusy = ref(false)
 const error = ref('')
 const msg = ref('')
 const draftSlots = ref([])
@@ -987,10 +1006,59 @@ async function removeLedgerCat(c) {
   }
 }
 
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadBackup() {
+  backupBusy.value = true
+  error.value = ''
+  msg.value = ''
+  try {
+    const { blob, filename } = await api.downloadBackup()
+    saveBlob(blob, filename)
+    msg.value = '备份已下载'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    backupBusy.value = false
+  }
+}
+
+async function onRestoreFile(ev) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!file) return
+  const ok = await askConfirm({
+    title: '从备份恢复',
+    message: '将覆盖本机全部条目、材料、账本、物资和设置（不含界面主题）。此操作不可撤销，建议先再下载一份当前备份。确定恢复？',
+    confirmText: '覆盖并恢复',
+    danger: true,
+  })
+  if (!ok) return
+  restoreBusy.value = true
+  error.value = ''
+  msg.value = ''
+  try {
+    await api.restoreBackup(file)
+    msg.value = '恢复完成，页面将刷新'
+    window.location.reload()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    restoreBusy.value = false
+  }
+}
+
 watch(
   () => route.query.tab,
   (v) => {
-    if (['layout', 'keywords', 'slots', 'forms', 'ledger', 'appearance'].includes(v)) tab.value = v
+    if (['layout', 'keywords', 'slots', 'forms', 'ledger', 'appearance', 'data'].includes(v)) tab.value = v
   },
 )
 
