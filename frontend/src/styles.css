@@ -365,6 +365,28 @@ button, input, select, textarea { font: inherit; }
   padding: 0.4rem 1.5rem 0;
   font-size: 0.8rem;
 }
+.analyze-pending-card {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 980;
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  background: var(--ink);
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(10, 15, 26, 0.28);
+}
+.analyze-pending-card strong {
+  display: block;
+  font-size: 0.92rem;
+}
+.analyze-pending-card p {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+}
 .main { max-width: 1200px; width: 100%; margin: 0 auto; padding: 1.5rem; }
 .page-list { width: 100%; }
 

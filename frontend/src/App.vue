@@ -68,6 +68,7 @@
 
     <BatchUploadDialog />
     <ConfirmDialog />
+    <AnalyzePendingGuard />
   </div>
 </template>
 
@@ -77,6 +78,7 @@ import { useRoute } from 'vue-router'
 import { checkApiHealth } from './api/client'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import BatchUploadDialog from './components/BatchUploadDialog.vue'
+import AnalyzePendingGuard from './components/AnalyzePendingGuard.vue'
 
 const route = useRoute()
 const apiError = ref('')

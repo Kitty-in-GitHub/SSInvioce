@@ -97,28 +97,42 @@
         >
           <h4>
             {{ slot.label }}
-            <span v-if="slot.missing" class="slot-missing-tag">缺失</span>
+            <span v-if="slot.material?.processing" class="chip chip-muted">识别中</span>
+            <span v-else-if="slot.missing" class="slot-missing-tag">缺失</span>
           </h4>
           <div class="preview">
             <MaterialPreview
-              v-if="slot.material"
-              :url="slot.material.url"
-              :kind="previewKind(slot.material)"
+              v-if="slot.preview"
+              :url="slot.preview.url"
+              :kind="previewKind(slot.preview)"
               mode="detail"
-              :title="slot.material.original_name"
+              :title="slot.preview.original_name"
               empty-text="无法预览"
             />
             <div v-else class="empty" :class="{ 'empty-missing': slot.missing }">
               {{ slot.missing ? '材料缺失' : '尚未上传' }}
             </div>
           </div>
-          <div class="meta" v-if="slot.material">{{ slot.material.original_name }}</div>
+          <div class="meta" v-if="slot.preview">{{ slot.preview.original_name }}</div>
           <div class="actions">
             <label class="btn btn-sm">
-              {{ slot.material ? '替换' : '上传' }}
-              <input type="file" hidden :accept="slot.accept" @change="onUpload($event, slot.type)" />
+              {{ slotBusy(slot.type) ? '处理中…' : slot.material ? '替换' : '上传' }}
+              <input
+                type="file"
+                hidden
+                :accept="slot.accept"
+                :disabled="slotBusy(slot.type)"
+                @change="onUpload($event, slot.type)"
+              />
             </label>
-            <button v-if="slot.material" class="btn btn-danger btn-sm" @click="removeMaterial(slot.material)">删除</button>
+            <button
+              v-if="slot.material"
+              class="btn btn-danger btn-sm"
+              :disabled="slotBusy(slot.type)"
+              @click="removeMaterial(slot.material)"
+            >
+              {{ deletingType === slot.type ? '删除中…' : '删除' }}
+            </button>
           </div>
         </div>
       </div>
@@ -141,17 +155,19 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, isImageMaterial, isPdfMaterial } from '../api/client'
 import { acceptForKind, missingLabelFromSlots, useSlots } from '../composables/useSlots'
 import InvoiceDupCompare from '../components/InvoiceDupCompare.vue'
 import MaterialPreview from '../components/MaterialPreview.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
+import { useAnalyzeJobs } from '../composables/useAnalyzeJobs'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const route = useRoute()
 const { askConfirm } = useConfirmDialog()
+const { kickAnalyzePolling } = useAnalyzeJobs()
 const entry = ref(null)
 const groups = ref([])
 const loading = ref(true)
@@ -165,7 +181,10 @@ const editNote = ref('')
 const editAmount = ref('')
 const editGroupId = ref(null)
 const compare = ref(null)
-const { slots: slotDefs, slotLabels, invoiceId } = useSlots()
+const uploadingType = ref('')
+const deletingType = ref('')
+const localPreview = ref(null)
+const { slots: slotDefs, slotLabels, invoiceId, requiredIds } = useSlots()
 
 function missingLabel(missing) {
   return missingLabelFromSlots(missing, slotLabels.value)
@@ -181,12 +200,14 @@ const slots = computed(() => {
     { id: 'payment', label: '支付记录', file_kind: 'image' },
   ]).map((s) => {
     const material = pick(s.id)
+    const preview = localPreview.value?.type === s.id ? localPreview.value : material
     return {
       type: s.id,
       label: s.label,
       accept: acceptForKind(s.file_kind),
       material,
-      missing: !material && missingSet.has(s.id),
+      preview,
+      missing: !material && !preview && missingSet.has(s.id),
     }
   })
 })
@@ -204,20 +225,50 @@ function previewKindFromNameMime(name, mime) {
   return 'image'
 }
 
-async function load() {
-  loading.value = true
+function slotBusy(type) {
+  return uploadingType.value === type || deletingType.value === type
+}
+
+function completenessFromMaterials(materials) {
+  const types = new Set((materials || []).map((m) => m.type))
+  const required = requiredIds.value.length ? requiredIds.value : ['invoice', 'order', 'payment']
+  const missing = required.filter((id) => !types.has(id))
+  const inv = invoiceId.value
+  return {
+    complete: missing.length === 0,
+    has_invoice: types.has(inv),
+    has_order: types.has('order'),
+    has_payment: types.has('payment'),
+    missing,
+  }
+}
+
+function syncDupWarn(next = entry.value) {
+  const inv = (next?.materials || []).find((m) => m.type === invoiceId.value)
+  dupWarn.value = inv?.duplicate_warning || null
+}
+
+function applyEntry(next) {
+  entry.value = next
+  editTitle.value = next.title
+  editNote.value = next.note || ''
+  editAmount.value = next.amount ?? ''
+  editGroupId.value = next.group_id
+  syncDupWarn(next)
+}
+
+async function load({ silent } = {}) {
+  if (!silent) loading.value = true
   error.value = ''
-  compare.value = null
+  if (!silent) compare.value = null
   try {
-    ;[entry.value, groups.value] = await Promise.all([api.getEntry(props.id), api.listGroups()])
-    editTitle.value = entry.value.title
-    editNote.value = entry.value.note || ''
-    editAmount.value = entry.value.amount ?? ''
-    editGroupId.value = entry.value.group_id
+    const [next, groupList] = await Promise.all([api.getEntry(props.id), api.listGroups()])
+    applyEntry(next)
+    groups.value = groupList
   } catch (e) {
     error.value = e.message
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -320,25 +371,34 @@ async function deleteDupEntry() {
 async function onUpload(ev, type) {
   const file = ev.target.files?.[0]
   ev.target.value = ''
-  if (!file) return
+  if (!file || slotBusy(type)) return
   error.value = ''
   dupWarn.value = null
   msg.value = ''
+  uploadingType.value = type
+  const blobUrl = URL.createObjectURL(file)
+  localPreview.value = {
+    type,
+    url: blobUrl,
+    original_name: file.name,
+    mime: file.type || '',
+  }
   try {
-    const existing = entry.value.materials.find((m) => m.type === type)
-    if (existing) await api.deleteMaterial(existing.id)
-    const uploaded = await api.uploadMaterial(file, { entryId: Number(props.id), type })
-    await load()
-    msg.value = `${slotLabels.value[type] || type}已更新`
-    if (uploaded?.duplicate_warning) {
-      dupWarn.value = uploaded.duplicate_warning
-    }
+    await api.uploadMaterial(file, { entryId: Number(props.id), type })
+    await load({ silent: true })
+    kickAnalyzePolling()
+    msg.value = `${slotLabels.value[type] || type}已上传，正在后台识别`
   } catch (e) {
     error.value = e.message
+  } finally {
+    uploadingType.value = ''
+    if (localPreview.value?.url === blobUrl) localPreview.value = null
+    nextTick(() => URL.revokeObjectURL(blobUrl))
   }
 }
 
 async function removeMaterial(m) {
+  if (slotBusy(m.type)) return
   const ok = await askConfirm({
     title: '删除材料',
     message: `确定删除材料「${m.original_name}」？`,
@@ -347,12 +407,28 @@ async function removeMaterial(m) {
     danger: true,
   })
   if (!ok) return
+  const snapshot = entry.value
+  const materials = (snapshot.materials || []).filter((x) => x.id !== m.id)
+  entry.value = {
+    ...snapshot,
+    materials,
+    completeness: completenessFromMaterials(materials),
+  }
+  if (m.type === invoiceId.value || m.type === 'invoice') dupWarn.value = null
+  deletingType.value = m.type
+  error.value = ''
   try {
     await api.deleteMaterial(m.id)
-    if (m.type === 'invoice') dupWarn.value = null
-    await load()
+    await load({ silent: true })
   } catch (e) {
-    error.value = e.message
+    if (e.status === 404) {
+      await load({ silent: true })
+    } else {
+      entry.value = snapshot
+      error.value = e.message
+    }
+  } finally {
+    deletingType.value = ''
   }
 }
 
@@ -374,6 +450,38 @@ async function compose() {
   }
 }
 
-watch(() => route.params.id, load)
+const anyProcessing = computed(() => (entry.value?.materials || []).some((m) => m.processing))
+let processingTimer = null
+
+function stopProcessingTimer() {
+  if (!processingTimer) return
+  clearInterval(processingTimer)
+  processingTimer = null
+}
+
+watch(
+  anyProcessing,
+  (busy, was) => {
+    if (busy) {
+      kickAnalyzePolling()
+      if (!processingTimer) {
+        processingTimer = window.setInterval(async () => {
+          await kickAnalyzePolling()
+          await load({ silent: true })
+        }, 1600)
+      }
+      return
+    }
+    stopProcessingTimer()
+    if (was) {
+      void load({ silent: true })
+      if (String(msg.value).includes('后台识别')) msg.value = '识别已完成'
+    }
+  },
+  { immediate: true },
+)
+
+watch(() => route.params.id, () => load())
 onMounted(load)
+onUnmounted(stopProcessingTimer)
 </script>

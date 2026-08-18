@@ -27,8 +27,18 @@ async def lifespan(_app: FastAPI):
 
     init_caches()
     removed = cleanup_all()
-    log.info("service=%s version=%s ready cache_cleaned=%s", SERVICE_NAME, SERVICE_VERSION, removed)
+    from .services.analyze_jobs import resume_pending_analyze_jobs, shutdown_analyze_jobs
+
+    resumed = resume_pending_analyze_jobs()
+    log.info(
+        "service=%s version=%s ready cache_cleaned=%s analyze_resumed=%s",
+        SERVICE_NAME,
+        SERVICE_VERSION,
+        removed,
+        resumed,
+    )
     yield
+    shutdown_analyze_jobs()
     get_logger("startup").info("service shutting down")
 
 

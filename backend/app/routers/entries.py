@@ -6,13 +6,14 @@ from ..db import get_conn, now_iso, row_to_dict
 from ..logging_config import get_logger
 from ..models import EntryCreate, EntryOut, EntryUpdate, ReparseAmountRequest
 from ..services.amount import apply_auto_amount, extract_invoice_amount
+from ..services.duplicates import find_invoice_duplicate, warning_from_hit
 from ..services.serializers import completeness_from_types, material_to_out
 from ..services.storage import delete_stored_files
 router = APIRouter(prefix="/api/entries", tags=["entries"])
 log = get_logger("entries")
 
 
-def _entry_payload(conn, entry_id: int, *, with_materials: bool = True) -> EntryOut:
+def _entry_payload(conn, entry_id: int, *, with_materials: bool = True, with_dup_warnings: bool = False) -> EntryOut:
     row = conn.execute(
         """
         SELECT e.*, g.name AS group_name
@@ -29,7 +30,16 @@ def _entry_payload(conn, entry_id: int, *, with_materials: bool = True) -> Entry
         (entry_id,),
     ).fetchall()
     types = {m["type"] for m in mats}
-    materials = [material_to_out(dict(m)) for m in mats] if with_materials else []
+    materials = []
+    if with_materials:
+        for m in mats:
+            data = dict(m)
+            warn = None
+            if with_dup_warnings and data.get("invoice_number"):
+                hit = find_invoice_duplicate(conn, data["invoice_number"], exclude_material_ids={int(data["id"])})
+                if hit:
+                    warn = warning_from_hit(reason="invoice_number", hit=hit)
+            materials.append(material_to_out(data, duplicate_warning=warn))
     e = dict(row)
     source = e.get("amount_source") or "empty"
     if source not in ("auto", "manual", "empty"):
@@ -93,7 +103,7 @@ def create_entry(body: EntryCreate):
 @router.get("/{entry_id}", response_model=EntryOut)
 def get_entry(entry_id: int):
     with get_conn() as conn:
-        return _entry_payload(conn, entry_id)
+        return _entry_payload(conn, entry_id, with_dup_warnings=True)
 
 
 @router.patch("/{entry_id}", response_model=EntryOut)

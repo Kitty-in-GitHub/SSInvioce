@@ -40,4 +40,5 @@ def material_to_out(row: dict, *, duplicate_warning: dict[str, Any] | None = Non
         invoice_code=row.get("invoice_code"),
         content_sha256=row.get("content_sha256"),
         duplicate_warning=warn,
+        processing=(row.get("analyze_status") == "pending"),
     )

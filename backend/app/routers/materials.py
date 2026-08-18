@@ -3,19 +3,20 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from ..db import get_conn, now_iso
 from ..logging_config import get_logger
 from ..models import MaterialAssign, MaterialOut, MaterialType, MaterialTypeUpdate
 from ..services.amount import apply_auto_amount
+from ..services.analyze_jobs import list_pending_jobs, submit_analyze
 from ..services.classify import classify_file
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
 from ..services.features import extract_features, file_sha256, normalize_invoice_digits
 from ..services.serializers import material_to_out
 from ..services.settings_store import invoice_slot_id
-from ..services.storage import delete_file, probe_image_size, resolve_stored, store_upload
+from ..services.storage import delete_file, delete_stored_files, probe_image_size, resolve_stored, store_upload
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 log = get_logger("materials")
@@ -39,8 +40,15 @@ def list_inbox():
         return [material_to_out(dict(r)) for r in rows]
 
 
+@router.get("/jobs")
+def list_material_jobs():
+    pending = list_pending_jobs()
+    return {"pending": pending, "count": len(pending)}
+
+
 @router.post("/upload", response_model=MaterialOut)
 async def upload_material(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     entry_id: int | None = Form(default=None),
     type: MaterialType | None = Form(default=None),
@@ -66,67 +74,57 @@ async def upload_material(
     if suffix != ".pdf":
         width, height = probe_image_size(abs_path)
 
-    inv_id = invoice_slot_id()
-    # Slot uploads used to skip OCR; extract when hanging on an entry so amount can auto-fill.
-    need_features = type is None or type == inv_id or type == "unknown" or entry_id is not None
-    feat = None
-    if need_features:
-        feat = extract_features(
-            temp_id="",
-            original_name=file.filename,
-            stored_path=rel,
-            abs_path=abs_path,
-            width=width,
-            height=height,
-        )
-        mat_type = type or feat.suggested_type or classify_file(file.filename, width=width, height=height)
-    else:
-        mat_type = type
+    mat_type = type or classify_file(file.filename, width=width, height=height)
     mime = _guess_mime(file.filename, file.content_type)
     ts = now_iso()
-    inv_no = normalize_invoice_digits(feat.invoice_number) if feat and mat_type == inv_id else None
-    inv_code = normalize_invoice_digits(feat.invoice_code) if feat and mat_type == inv_id else None
-    digest = feat.content_sha256 if feat else file_sha256(abs_path)
+    digest = file_sha256(abs_path)
+    stale_paths: list[str] = []
+    mid = 0
+    payload = None
 
     with get_conn() as conn:
-        dup_warn = None
-        if mat_type == inv_id and inv_no:
-            hit = find_invoice_duplicate(conn, inv_no)
-            if hit:
-                dup_warn = warning_from_hit(reason="invoice_number", hit=hit)
         cur = conn.execute(
             """
             INSERT INTO materials (
                 entry_id, type, original_name, stored_path, mime, width, height, created_at,
-                invoice_number, invoice_code, content_sha256
+                invoice_number, invoice_code, content_sha256, analyze_status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (entry_id, mat_type, file.filename, rel, mime, width, height, ts, inv_no, inv_code, digest),
+            (entry_id, mat_type, file.filename, rel, mime, width, height, ts, None, None, digest, "pending"),
         )
         mid = int(cur.lastrowid)
         if entry_id is not None:
+            stale = conn.execute(
+                "SELECT id, stored_path FROM materials WHERE entry_id = ? AND type = ? AND id != ?",
+                (entry_id, mat_type, mid),
+            ).fetchall()
+            for old in stale:
+                conn.execute("DELETE FROM materials WHERE id = ?", (old["id"],))
+                stale_paths.append(old["stored_path"])
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, entry_id))
             apply_auto_amount(
                 conn,
                 entry_id,
                 stored_path=rel,
                 original_name=file.filename,
-                parsed_amount=feat.amount if feat else None,
-                read_pdf=suffix == ".pdf" and not (feat and feat.amount is not None),
+                parsed_amount=None,
+                read_pdf=False,
             )
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (mid,)).fetchone()
         log.info(
-            "uploaded material id=%s type=%s entry_id=%s name=%r bytes=%s inv=%s dup=%s",
+            "uploaded material id=%s type=%s entry_id=%s name=%r bytes=%s queued_analyze=1",
             mid,
             mat_type,
             entry_id,
             file.filename,
             len(content),
-            inv_no,
-            bool(dup_warn),
         )
-        return material_to_out(dict(row), duplicate_warning=dup_warn)
+        payload = material_to_out(dict(row))
+    if stale_paths:
+        background_tasks.add_task(delete_stored_files, stale_paths)
+    submit_analyze(mid)
+    return payload
 
 
 @router.patch("/{material_id}", response_model=MaterialOut)
@@ -282,7 +280,7 @@ def get_material_file(material_id: int):
 
 
 @router.delete("/{material_id}")
-def delete_material(material_id: int):
+def delete_material(material_id: int, background_tasks: BackgroundTasks):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         if not row:
@@ -294,5 +292,5 @@ def delete_material(material_id: int):
                 (now_iso(), row["entry_id"]),
             )
         rel = row["stored_path"]
-    delete_file(rel)
+    background_tasks.add_task(delete_file, rel)
     return {"ok": True}

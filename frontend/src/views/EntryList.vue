@@ -423,6 +423,7 @@ import { api, formatAmount, isImageMaterial, isPdfMaterial } from '../api/client
 import { acceptForKind, useSlots } from '../composables/useSlots'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
+import { kickAnalyzePolling } from '../composables/useAnalyzeJobs'
 import GroupFormDialog from '../components/GroupFormDialog.vue'
 import MaterialPreview from '../components/MaterialPreview.vue'
 
@@ -503,17 +504,13 @@ async function onSlotFilePicked(ev) {
   error.value = ''
   hint.value = ''
   try {
-    const uploaded = await api.uploadMaterial(file, {
+    await api.uploadMaterial(file, {
       entryId: target.entryId,
       type: target.type,
     })
-    await load()
-    hint.value = `已上传「${target.entryTitle}」的${target.label}`
-    if (uploaded?.duplicate_warning) {
-      const w = uploaded.duplicate_warning
-      const title = w.existing_entry_title || (w.existing_entry_id != null ? `#${w.existing_entry_id}` : '已有材料')
-      hint.value = `已上传${target.label}；可能与「${title}」重复，可在详情页对比`
-    }
+    await load({ silent: true })
+    kickAnalyzePolling()
+    hint.value = `已上传「${target.entryTitle}」的${target.label}，正在后台识别`
   } catch (e) {
     error.value = e.message
   } finally {

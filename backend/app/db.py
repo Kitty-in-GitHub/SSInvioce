@@ -72,6 +72,7 @@ def init_db() -> None:
         _ensure_column(conn, "materials", "invoice_number", "TEXT")
         _ensure_column(conn, "materials", "invoice_code", "TEXT")
         _ensure_column(conn, "materials", "content_sha256", "TEXT")
+        _ensure_column(conn, "materials", "analyze_status", "TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_entries_group_id ON entries(group_id)"
         )

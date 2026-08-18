@@ -51,6 +51,7 @@ class MaterialOut(BaseModel):
     invoice_code: Optional[str] = None
     content_sha256: Optional[str] = None
     duplicate_warning: Optional[DuplicateWarning] = None
+    processing: bool = False
 
 
 class Completeness(BaseModel):

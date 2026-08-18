@@ -89,6 +89,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteMaterial: (id) => request(`/api/materials/${id}`, { method: 'DELETE' }),
+  listAnalyzeJobs: () => request('/api/materials/jobs'),
   classifyPreview: async (files) => {
     const fd = new FormData()
     for (const f of files) fd.append('files', f)
