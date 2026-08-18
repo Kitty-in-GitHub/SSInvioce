@@ -1546,6 +1546,12 @@ a.link-btn {
 }
 .amount-cell .chip { flex: none; }
 .amount-cell .amount-edit { flex: 1; min-width: 0; }
+.amount-read {
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+}
 .entry-table .col-group { width: 8.5rem; }
 .entry-table .col-actions {
   width: 1%;
@@ -1677,6 +1683,10 @@ a.link-btn {
 .chip-muted {
   background: #eef1f6;
   color: var(--muted);
+}
+.chip-draft {
+  background: #e8edf4;
+  color: #5b6b82;
 }
 .group-head .chip {
   background: #eef1f6;

@@ -230,12 +230,15 @@
                         <div class="amount-cell">
                           <span
                             class="chip"
-                            :class="amountChipClass(e.amount_source)"
-                            :title="amountSourceHint(e.amount_source)"
+                            :class="entryAmountChipClass(e)"
+                            :title="entryAmountChipHint(e)"
                           >
-                            {{ e.amount_source === 'manual' ? '手改' : e.amount_source === 'auto' ? '自动' : '无金额' }}
+                            {{ entryAmountChipLabel(e) }}
                           </span>
-                          <div class="amount-edit">
+                          <div v-if="hasMaterials(e)" class="amount-read" title="请到详情页修改金额">
+                            {{ e.amount != null ? formatAmount(e.amount) : '—' }}
+                          </div>
+                          <div v-else class="amount-edit">
                             <span class="amount-prefix" aria-hidden="true">¥</span>
                             <input
                               type="number"
@@ -243,6 +246,7 @@
                               min="0"
                               :value="e.amount ?? ''"
                               placeholder="0.00"
+                              title="可直接修改拟建条目金额"
                               @change="onAmountChange(e, $event)"
                             />
                           </div>
@@ -539,6 +543,10 @@ function isCollapsed(key) {
   return collapsedKeys.value.has(key)
 }
 
+function hasMaterials(entry) {
+  return (entry.materials || []).length > 0
+}
+
 function amountChipClass(source) {
   if (source === 'manual') return 'chip-warn'
   if (source === 'auto') return 'chip-ok'
@@ -549,6 +557,23 @@ function amountSourceHint(source) {
   if (source === 'manual') return '金额已手改，不再随识别结果覆盖'
   if (source === 'auto') return '金额来自发票/支付记录自动识别'
   return '尚未识别到金额'
+}
+
+function entryAmountChipLabel(entry) {
+  if (!hasMaterials(entry)) return '拟建'
+  if (entry.amount_source === 'manual') return '手改'
+  if (entry.amount_source === 'auto') return '自动'
+  return '无金额'
+}
+
+function entryAmountChipClass(entry) {
+  if (!hasMaterials(entry)) return 'chip-draft'
+  return amountChipClass(entry.amount_source)
+}
+
+function entryAmountChipHint(entry) {
+  if (!hasMaterials(entry)) return '尚未挂材料，金额将在上传后按识别结果覆盖为自动'
+  return amountSourceHint(entry.amount_source)
 }
 
 function toggleCollapse(key) {
@@ -819,6 +844,11 @@ async function remove(e) {
 }
 
 async function onAmountChange(e, ev) {
+  if (hasMaterials(e)) {
+    ev.target.value = e.amount ?? ''
+    error.value = '非拟建条目请到详情页修改金额'
+    return
+  }
   const raw = ev.target.value
   const amount = raw === '' ? null : Number(raw)
   if (raw !== '' && Number.isNaN(amount)) {
@@ -828,7 +858,7 @@ async function onAmountChange(e, ev) {
   }
   try {
     await api.updateEntry(e.id, { amount })
-    await load()
+    await load({ silent: true })
   } catch (err) {
     error.value = err.message
   }

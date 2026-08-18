@@ -67,8 +67,8 @@ async def upload_material(
         width, height = probe_image_size(abs_path)
 
     inv_id = invoice_slot_id()
-    # Known non-invoice type (e.g. detail-page slot upload): skip OCR, only hash the file.
-    need_features = type is None or type == inv_id or type == "unknown"
+    # Slot uploads used to skip OCR; extract when hanging on an entry so amount can auto-fill.
+    need_features = type is None or type == inv_id or type == "unknown" or entry_id is not None
     feat = None
     if need_features:
         feat = extract_features(
@@ -107,15 +107,14 @@ async def upload_material(
         mid = int(cur.lastrowid)
         if entry_id is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (ts, entry_id))
-            if mat_type == inv_id:
-                apply_auto_amount(
-                    conn,
-                    entry_id,
-                    stored_path=rel,
-                    original_name=file.filename,
-                    parsed_amount=feat.amount if feat else None,
-                    read_pdf=False,
-                )
+            apply_auto_amount(
+                conn,
+                entry_id,
+                stored_path=rel,
+                original_name=file.filename,
+                parsed_amount=feat.amount if feat else None,
+                read_pdf=suffix == ".pdf" and not (feat and feat.amount is not None),
+            )
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (mid,)).fetchone()
         log.info(
             "uploaded material id=%s type=%s entry_id=%s name=%r bytes=%s inv=%s dup=%s",
@@ -190,15 +189,14 @@ def update_material(material_id: int, body: MaterialAssign):
         )
         if new_entry is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (now_iso(), new_entry))
-            if new_type == invoice_slot_id():
-                apply_auto_amount(
-                    conn,
-                    new_entry,
-                    stored_path=new_path,
-                    original_name=data["original_name"],
-                    parsed_amount=feat_amount,
-                    read_pdf=False,
-                )
+            apply_auto_amount(
+                conn,
+                new_entry,
+                stored_path=new_path,
+                original_name=data["original_name"],
+                parsed_amount=feat_amount,
+                read_pdf=feat_amount is None,
+            )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         return material_to_out(dict(updated), duplicate_warning=dup_warn)
 
@@ -250,15 +248,14 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
                 "UPDATE entries SET updated_at = ? WHERE id = ?",
                 (now_iso(), row["entry_id"]),
             )
-            if body.type == invoice_slot_id():
-                apply_auto_amount(
-                    conn,
-                    row["entry_id"],
-                    stored_path=row["stored_path"],
-                    original_name=row["original_name"],
-                    parsed_amount=feat_amount,
-                    read_pdf=False,
-                )
+            apply_auto_amount(
+                conn,
+                row["entry_id"],
+                stored_path=row["stored_path"],
+                original_name=row["original_name"],
+                parsed_amount=feat_amount,
+                read_pdf=feat_amount is None,
+            )
         updated = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         return material_to_out(dict(updated), duplicate_warning=dup_warn)
 

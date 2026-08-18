@@ -51,7 +51,8 @@
               />
             </div>
           </div>
-          <span v-if="c.complete" class="chip chip-ok">齐套</span>
+          <span v-if="!clusterHasMaterials(c)" class="chip chip-draft">拟建</span>
+          <span v-else-if="c.complete" class="chip chip-ok">齐套</span>
         </header>
         <div v-if="c.dupKeepBoth" class="dup-ok">已选择都添加，确认入库时将一并写入</div>
         <div v-else-if="c.duplicate_warning" class="dup-warn">
@@ -492,6 +493,22 @@ const ocrHint = computed(() => {
   return ''
 })
 
+function clusterHasMaterials(cluster) {
+  if ((cluster.temp_ids || []).length) return true
+  return unmatchedItems.value.some((it) => it.assignMode === `cluster:${cluster.cluster_id}`)
+}
+
+function autoAmountFromItem(item) {
+  const n = Number(item?.features?.amount)
+  return Number.isFinite(n) ? n : null
+}
+
+function applyAutoAmountToCluster(cluster, item) {
+  const amt = autoAmountFromItem(item)
+  if (amt == null) return
+  cluster.amount = amt
+}
+
 function itemInCluster(cluster, type) {
   const tid = Object.entries(cluster.types || {}).find(([, t]) => t === type)?.[0]
   if (!tid) return null
@@ -679,6 +696,12 @@ function onAssignModeChange(item) {
     item.create_entry_title = titleFromFilename(item.original_name)
   }
   problemTempIds.value = new Set()
+  const mode = String(item.assignMode || '')
+  if (mode.startsWith('cluster:')) {
+    const cid = mode.slice('cluster:'.length)
+    const cluster = clusters.value.find((c) => String(c.cluster_id) === cid)
+    if (cluster) applyAutoAmountToCluster(cluster, item)
+  }
 }
 
 function failConfirm(message, tempId = null) {
