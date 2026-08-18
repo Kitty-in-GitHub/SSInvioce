@@ -281,6 +281,21 @@
                           >
                             {{ composingId === e.id ? '拼版中…' : '拼版' }}
                           </button>
+                          <router-link
+                            v-if="e.ledger_txn_id"
+                            class="link-btn"
+                            :to="{ path: '/ledger', query: { txn: e.ledger_txn_id } }"
+                          >已入账</router-link>
+                          <button
+                            v-else
+                            class="link-btn"
+                            type="button"
+                            :disabled="e.amount == null || Number(e.amount) <= 0 || postingId === e.id"
+                            :title="e.amount == null || Number(e.amount) <= 0 ? '请先填写金额' : '记入账本'"
+                            @click="postToLedger(e)"
+                          >
+                            {{ postingId === e.id ? '入账中…' : '入账' }}
+                          </button>
                           <button class="link-btn link-danger" type="button" @click="remove(e)">删除</button>
                         </div>
                       </td>
@@ -527,6 +542,7 @@ const creatingGroup = ref(false)
 const error = ref('')
 const hint = ref('')
 const composingId = ref(null)
+const postingId = ref(null)
 const composingGroupId = ref(null)
 const formGroupId = ref(null)
 const selectedIds = ref([])
@@ -1194,6 +1210,27 @@ function downloadBlob(blob, filename) {
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
+}
+
+async function postToLedger(e) {
+  if (e.amount == null || Number(e.amount) <= 0) return
+  const ok = await askConfirm({
+    title: '记入账本',
+    message: `将「${e.title}」记为支出 ${formatAmount(e.amount)}？金额以当前值为快照，之后改条目金额不会回写账本。`,
+    confirmText: '入账',
+  })
+  if (!ok) return
+  postingId.value = e.id
+  error.value = ''
+  try {
+    const txn = await api.ledgerFromEntry(e.id)
+    e.ledger_txn_id = txn.id
+    hint.value = '已记入账本'
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    postingId.value = null
+  }
 }
 
 async function compose(e) {

@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h1>设置</h1>
-        <p>外观主题、槽位、拼版画板、分类关键词与公文表</p>
+        <p>外观主题、槽位、拼版画板、分类关键词、公文表与记账科目</p>
       </div>
     </div>
 
@@ -13,6 +13,7 @@
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'layout'" :class="{ active: tab === 'layout' }" @click="tab = 'layout'">拼版</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'keywords'" :class="{ active: tab === 'keywords' }" @click="tab = 'keywords'">分类关键词</button>
       <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'forms'" :class="{ active: tab === 'forms' }" @click="tab = 'forms'">表格</button>
+      <button type="button" class="settings-tab" role="tab" :aria-selected="tab === 'ledger'" :class="{ active: tab === 'ledger' }" @click="tab = 'ledger'">记账科目</button>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -357,6 +358,25 @@
         </button>
       </div>
     </section>
+
+    <section v-show="!loading && tab === 'ledger'" class="settings-panel card" role="tabpanel">
+      <p class="meta settings-lead">记账科目用于「记账」页分类。已有流水的科目不能删除。也可在记账页管理。</p>
+      <div class="ledger-cat-admin-grid">
+        <div v-for="kind in ['income', 'expense']" :key="kind">
+          <h4 class="form-fill-h">{{ kind === 'income' ? '收入' : '支出' }}</h4>
+          <div v-for="c in ledgerCats.filter((x) => x.kind === kind)" :key="c.id" class="form-def-row">
+            <input :value="c.id" disabled />
+            <input :value="c.name" maxlength="40" @change="renameLedgerCat(c, $event)" />
+            <button class="btn-ghost custom-color-remove" type="button" title="删除" @click="removeLedgerCat(c)">×</button>
+          </div>
+          <div class="form-def-row">
+            <input v-model="newLedgerCat[kind].id" maxlength="32" placeholder="id" />
+            <input v-model="newLedgerCat[kind].name" maxlength="40" placeholder="显示名" />
+            <button class="btn btn-sm" type="button" @click="addLedgerCat(kind)">添加</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -366,11 +386,13 @@ import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import { loadSlots } from '../composables/useSlots'
 import { useTheme } from '../composables/useTheme'
+import { useConfirmDialog } from '../composables/useConfirmDialog'
 
 const route = useRoute()
 const { themeId, presets: themePresets, setTheme } = useTheme()
+const { askConfirm } = useConfirmDialog()
 const tab = ref(
-  ['appearance', 'layout', 'keywords', 'forms'].includes(route.query.tab) ? route.query.tab : 'slots',
+  ['appearance', 'layout', 'keywords', 'forms', 'ledger'].includes(route.query.tab) ? route.query.tab : 'slots',
 )
 const loading = ref(true)
 const saving = ref(false)
@@ -402,6 +424,11 @@ const boardEl = ref(null)
 const drag = ref(null)
 const draftForms = ref([])
 const formFileBusy = ref(false)
+const ledgerCats = ref([])
+const newLedgerCat = reactive({
+  income: { id: '', name: '' },
+  expense: { id: '', name: '' },
+})
 
 const currentRegions = computed(() => draftLayout.value.pages[pageIdx.value]?.regions || [])
 const placedIds = computed(() => {
@@ -580,8 +607,9 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await api.getSettings()
+    const [res, cats] = await Promise.all([api.getSettings(), api.listLedgerCategories()])
     cloneSettings(res)
+    ledgerCats.value = cats
     await loadSlots(true)
   } catch (e) {
     error.value = e.message
@@ -916,10 +944,53 @@ async function resetFormSchema(form) {
   }
 }
 
+async function addLedgerCat(kind) {
+  const id = newLedgerCat[kind].id.trim()
+  const name = newLedgerCat[kind].name.trim()
+  if (!id || !name) return
+  error.value = ''
+  try {
+    await api.createLedgerCategory({ id, kind, name })
+    newLedgerCat[kind].id = ''
+    newLedgerCat[kind].name = ''
+    ledgerCats.value = await api.listLedgerCategories()
+    msg.value = '已添加科目'
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function renameLedgerCat(c, ev) {
+  const name = ev.target.value.trim()
+  if (!name || name === c.name) return
+  try {
+    await api.updateLedgerCategory(c.id, { name })
+    ledgerCats.value = await api.listLedgerCategories()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function removeLedgerCat(c) {
+  const ok = await askConfirm({
+    title: '删除科目',
+    message: `删除科目「${c.name}」？已有流水的科目无法删除。`,
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    await api.deleteLedgerCategory(c.id)
+    ledgerCats.value = await api.listLedgerCategories()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
 watch(
   () => route.query.tab,
   (v) => {
-    if (v === 'layout' || v === 'keywords' || v === 'slots' || v === 'forms') tab.value = v
+    if (['layout', 'keywords', 'slots', 'forms', 'ledger', 'appearance'].includes(v)) tab.value = v
   },
 )
 

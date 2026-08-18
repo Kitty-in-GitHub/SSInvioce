@@ -55,6 +55,7 @@ def _group_payload(conn, group_id: int) -> GroupOut:
         created_at=g["created_at"],
         updated_at=g["updated_at"],
         has_form=group_has_form(g.get("form_data")),
+        budget=g.get("budget"),
         **stats,
     )
 
@@ -105,6 +106,12 @@ def update_group(group_id: int, body: GroupUpdate):
         name = body.name.strip() if body.name is not None else existing["name"]
         note = body.note if body.note is not None else existing["note"]
         sort_order = body.sort_order if body.sort_order is not None else existing["sort_order"]
+        if body.clear_budget:
+            budget = None
+        elif body.budget is not None:
+            budget = float(body.budget)
+        else:
+            budget = existing.get("budget")
         if body.name is not None:
             clash = conn.execute(
                 "SELECT id FROM groups WHERE name = ? AND id != ?",
@@ -113,8 +120,8 @@ def update_group(group_id: int, body: GroupUpdate):
             if clash:
                 raise HTTPException(status_code=400, detail="组名已存在")
         conn.execute(
-            "UPDATE groups SET name = ?, note = ?, sort_order = ?, updated_at = ? WHERE id = ?",
-            (name, note or "", int(sort_order or 0), now_iso(), group_id),
+            "UPDATE groups SET name = ?, note = ?, sort_order = ?, budget = ?, updated_at = ? WHERE id = ?",
+            (name, note or "", int(sort_order or 0), budget, now_iso(), group_id),
         )
         log.info("updated group id=%s", group_id)
         return _group_payload(conn, group_id)
@@ -127,5 +134,6 @@ def delete_group(group_id: int):
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="group not found")
         conn.execute("UPDATE entries SET group_id = NULL WHERE group_id = ?", (group_id,))
+        conn.execute("UPDATE ledger_txns SET group_id = NULL WHERE group_id = ?", (group_id,))
     log.info("deleted group id=%s", group_id)
     return {"ok": True}

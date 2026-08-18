@@ -17,6 +17,20 @@
         </p>
       </div>
       <div class="actions">
+        <router-link
+          v-if="entry?.ledger_txn_id"
+          class="btn"
+          :to="{ path: '/ledger', query: { txn: entry.ledger_txn_id } }"
+        >已入账</router-link>
+        <button
+          v-else
+          class="btn"
+          type="button"
+          :disabled="!entry || entry.amount == null || Number(entry.amount) <= 0 || posting"
+          @click="postToLedger"
+        >
+          {{ posting ? '入账中…' : '记入账本' }}
+        </button>
         <button class="btn btn-primary" :disabled="!entry?.completeness.complete || composing" @click="compose">
           {{ composing ? '拼版中…' : '生成拼版 PDF' }}
         </button>
@@ -175,6 +189,7 @@ const error = ref('')
 const dupWarn = ref(null)
 const msg = ref('')
 const composing = ref(false)
+const posting = ref(false)
 const reparsing = ref(false)
 const editTitle = ref('')
 const editNote = ref('')
@@ -429,6 +444,28 @@ async function removeMaterial(m) {
     }
   } finally {
     deletingType.value = ''
+  }
+}
+
+async function postToLedger() {
+  const e = entry.value
+  if (!e || e.amount == null || Number(e.amount) <= 0) return
+  const ok = await askConfirm({
+    title: '记入账本',
+    message: `将「${e.title}」记为支出 ¥${Number(e.amount).toFixed(2)}？金额以当前值为快照。`,
+    confirmText: '入账',
+  })
+  if (!ok) return
+  posting.value = true
+  error.value = ''
+  try {
+    const txn = await api.ledgerFromEntry(e.id)
+    entry.value = { ...e, ledger_txn_id: txn.id }
+    msg.value = '已记入账本'
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    posting.value = false
   }
 }
 

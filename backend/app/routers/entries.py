@@ -16,9 +16,10 @@ log = get_logger("entries")
 def _entry_payload(conn, entry_id: int, *, with_materials: bool = True, with_dup_warnings: bool = False) -> EntryOut:
     row = conn.execute(
         """
-        SELECT e.*, g.name AS group_name
+        SELECT e.*, g.name AS group_name, lt.id AS ledger_txn_id
         FROM entries e
         LEFT JOIN groups g ON g.id = e.group_id
+        LEFT JOIN ledger_txns lt ON lt.entry_id = e.id
         WHERE e.id = ?
         """,
         (entry_id,),
@@ -58,6 +59,7 @@ def _entry_payload(conn, entry_id: int, *, with_materials: bool = True, with_dup
         amount_source=source,
         amount_auto=e.get("amount_auto"),
         expense_row=e.get("expense_row"),
+        ledger_txn_id=e.get("ledger_txn_id"),
     )
 
 

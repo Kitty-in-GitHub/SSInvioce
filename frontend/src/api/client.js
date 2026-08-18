@@ -260,6 +260,51 @@ export const api = {
     request('/api/settings/classify-keywords/reset', { method: 'POST' }),
   resetLayout: () =>
     request('/api/settings/layout/reset', { method: 'POST' }),
+  ledgerSummary: () => request('/api/ledger/summary'),
+  listLedgerTxns: (params = {}) => {
+    const q = new URLSearchParams()
+    if (params.kind) q.set('kind', params.kind)
+    if (params.group_id != null) q.set('group_id', String(params.group_id))
+    if (params.ungrouped) q.set('ungrouped', 'true')
+    if (params.category_id) q.set('category_id', params.category_id)
+    if (params.from) q.set('from', params.from)
+    if (params.to) q.set('to', params.to)
+    const s = q.toString()
+    return request(`/api/ledger/txns${s ? `?${s}` : ''}`)
+  },
+  createLedgerTxn: (body) =>
+    request('/api/ledger/txns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  updateLedgerTxn: (id, body) =>
+    request(`/api/ledger/txns/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteLedgerTxn: (id) => request(`/api/ledger/txns/${id}`, { method: 'DELETE' }),
+  ledgerFromEntry: (entryId, body = {}) =>
+    request(`/api/ledger/from-entry/${entryId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  listLedgerCategories: () => request('/api/ledger/categories'),
+  createLedgerCategory: (body) =>
+    request('/api/ledger/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  updateLedgerCategory: (id, body) =>
+    request(`/api/ledger/categories/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteLedgerCategory: (id) => request(`/api/ledger/categories/${id}`, { method: 'DELETE' }),
 }
 
 export function formatAmount(val) {

@@ -76,6 +76,7 @@ class EntryOut(BaseModel):
     amount_source: AmountSource = "empty"
     amount_auto: Optional[float] = None
     expense_row: Optional[str] = None
+    ledger_txn_id: Optional[int] = None
 
 
 class MaterialTypeUpdate(BaseModel):
@@ -123,6 +124,8 @@ class GroupUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     note: Optional[str] = None
     sort_order: Optional[int] = None
+    budget: Optional[float] = None
+    clear_budget: bool = False
 
 
 class GroupOut(BaseModel):
@@ -137,6 +140,96 @@ class GroupOut(BaseModel):
     complete: bool = True
     incomplete_count: int = 0
     has_form: bool = False
+    budget: Optional[float] = None
+
+
+LedgerKind = Literal["income", "expense"]
+
+
+class LedgerCategoryOut(BaseModel):
+    id: str
+    kind: LedgerKind
+    name: str
+    sort_order: int
+
+
+class LedgerCategoryCreate(BaseModel):
+    id: str = Field(min_length=1, max_length=32)
+    kind: LedgerKind
+    name: str = Field(min_length=1, max_length=40)
+
+
+class LedgerCategoryUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    sort_order: Optional[int] = None
+
+
+class LedgerTxnOut(BaseModel):
+    id: int
+    kind: LedgerKind
+    amount: float
+    occurred_on: str
+    title: str
+    note: str
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+    category_id: str
+    category_name: str
+    entry_id: Optional[int] = None
+    entry_title: Optional[str] = None
+    created_at: str
+
+
+class LedgerTxnCreate(BaseModel):
+    kind: LedgerKind
+    amount: float
+    occurred_on: Optional[str] = None
+    title: str = Field(min_length=1, max_length=200)
+    note: str = ""
+    group_id: Optional[int] = None
+    category_id: str
+
+
+class LedgerTxnUpdate(BaseModel):
+    amount: Optional[float] = None
+    occurred_on: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    note: Optional[str] = None
+    group_id: Optional[int] = None
+    clear_group: bool = False
+    category_id: Optional[str] = None
+
+
+class LedgerFromEntry(BaseModel):
+    category_id: Optional[str] = None
+    occurred_on: Optional[str] = None
+    note: str = ""
+    group_id: Optional[int] = None
+    clear_group: bool = False
+
+
+class LedgerGroupBucket(BaseModel):
+    group_id: Optional[int] = None
+    group_name: str
+    budget: Optional[float] = None
+    expense_sum: float = 0.0
+    income_sum: float = 0.0
+    remaining: Optional[float] = None
+
+
+class LedgerCategoryBucket(BaseModel):
+    category_id: str
+    kind: LedgerKind
+    name: str
+    amount_sum: float = 0.0
+
+
+class LedgerSummary(BaseModel):
+    income_sum: float
+    expense_sum: float
+    balance: float
+    by_group: list[LedgerGroupBucket]
+    by_category: list[LedgerCategoryBucket]
 
 
 class ReparseAmountRequest(BaseModel):
