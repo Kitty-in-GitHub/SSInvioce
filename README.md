@@ -112,3 +112,15 @@ build-green.bat
 - `release/StarInvoiceHelper-green-*.zip`
 
 目标机无需安装 Python / Node。数据写在包内 `data/`。
+
+### 发布到 GitHub Release
+
+把 `release/StarInvoiceHelper-green-*.zip` 作为 Release 附件即可。建议在 Release 说明里写上 zip 的 **SHA256**（PowerShell：`Get-FileHash .\release\StarInvoiceHelper-green-*.zip -Algorithm SHA256`），并注明：本机工具、只监听 `127.0.0.1`、源码在本仓库、可用 `build-green.bat` 复现。
+
+Windows SmartScreen、360 等可能把**未签名**且自带 `python.exe` 的压缩包标成风险，多半是误报。不要用加壳等方式规避扫描。正确做法：
+
+1. 仓库公开，Release 说明写清用途与校验和
+2. 解压后把目录加入 360「信任区 / 加白名单」
+3. 若 Defender 误杀，到 [Microsoft 安全情报](https://www.microsoft.com/wdsi/filesubmission) 提交误报
+
+发布包不要带用户 `data/`（脚本生成的是空数据目录）。界面主题在浏览器本地，不包含在备份/绿色包里。
