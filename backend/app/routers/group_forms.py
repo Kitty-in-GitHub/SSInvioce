@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ..db import get_conn, now_iso
+from ..services.ledger_link import sync_entry_ledger
 from ..logging_config import get_logger
 from ..services.forms import (
     DEFAULT_FORM_ID,
@@ -135,6 +136,7 @@ def save_group_form(group_id: int, body: GroupFormUpdate):
                 "UPDATE entries SET expense_row = ?, updated_at = ? WHERE id = ?",
                 (row_id, now_iso(), eid),
             )
+            sync_entry_ledger(conn, eid)
         entries = _group_entries(conn, group_id)
         auto_map = auto_reimburse_map(entries, template)
         draft = {"fields": fields_out, "rows": {}}

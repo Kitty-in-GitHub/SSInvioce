@@ -298,26 +298,32 @@ def update_txn(txn_id: int, body: LedgerTxnUpdate):
             raise HTTPException(status_code=404, detail="流水不存在")
         from_entry = existing.get("entry_id") is not None
         amount = existing["amount"]
-        if body.amount is not None:
-            if body.amount <= 0:
-                raise HTTPException(status_code=400, detail="金额须大于 0")
-            amount = _money(body.amount)
-        occurred_on = _parse_on(body.occurred_on) if body.occurred_on is not None else existing["occurred_on"]
-        title = body.title.strip() if body.title is not None else existing["title"]
-        if not title:
-            raise HTTPException(status_code=400, detail="请填写摘要")
-        note = body.note if body.note is not None else existing["note"]
-        if body.clear_group:
-            group_id = None
-        elif body.group_id is not None:
-            group_id = body.group_id
+        title = existing["title"]
+        group_id = existing.get("group_id")
+        if from_entry:
+            if body.amount is not None and _money(body.amount) != _money(amount):
+                raise HTTPException(status_code=400, detail="报销入账的金额请在条目中修改，账本会同步")
+            if body.title is not None and body.title.strip() != title:
+                raise HTTPException(status_code=400, detail="报销入账的摘要请在条目中修改，账本会同步")
+            if body.clear_group or (body.group_id is not None and body.group_id != group_id):
+                raise HTTPException(status_code=400, detail="报销入账的分组请在条目中修改，账本会同步")
         else:
-            group_id = existing.get("group_id")
+            if body.amount is not None:
+                if body.amount <= 0:
+                    raise HTTPException(status_code=400, detail="金额须大于 0")
+                amount = _money(body.amount)
+            if body.title is not None:
+                title = body.title.strip()
+                if not title:
+                    raise HTTPException(status_code=400, detail="请填写摘要")
+            if body.clear_group:
+                group_id = None
+            elif body.group_id is not None:
+                group_id = body.group_id
+        occurred_on = _parse_on(body.occurred_on) if body.occurred_on is not None else existing["occurred_on"]
+        note = body.note if body.note is not None else existing["note"]
         category_id = body.category_id or existing["category_id"]
         kind = existing["kind"]
-        if from_entry:
-            # Snapshot amount stays unless explicitly changed; kind stays expense.
-            pass
         _require_category(conn, category_id, kind)
         _require_group(conn, group_id)
         conn.execute(

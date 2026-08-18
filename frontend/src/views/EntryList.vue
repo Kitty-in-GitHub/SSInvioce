@@ -1216,7 +1216,7 @@ async function postToLedger(e) {
   if (e.amount == null || Number(e.amount) <= 0) return
   const ok = await askConfirm({
     title: '记入账本',
-    message: `将「${e.title}」记为支出 ${formatAmount(e.amount)}？金额以当前值为快照，之后改条目金额不会回写账本。`,
+    message: `将「${e.title}」记为支出 ${formatAmount(e.amount)}？之后改条目的金额、标题或分组，账本会一并更新。`,
     confirmText: '入账',
   })
   if (!ok) return

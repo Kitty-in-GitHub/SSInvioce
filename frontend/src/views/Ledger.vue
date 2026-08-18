@@ -193,7 +193,7 @@
             </div>
             <div class="field">
               <label>金额</label>
-              <input v-model="form.amount" type="number" min="0" step="0.01" />
+              <input v-model="form.amount" type="number" min="0" step="0.01" :disabled="!!form.entry_id" />
             </div>
             <div class="field">
               <label>日期</label>
@@ -211,7 +211,7 @@
             </div>
             <div class="field">
               <label>活动分组</label>
-              <select v-model="form.group_id">
+              <select v-model="form.group_id" :disabled="!!form.entry_id">
                 <option value="">未分组</option>
                 <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
               </select>
@@ -221,7 +221,7 @@
               <input v-model="form.note" />
             </div>
           </div>
-          <p v-if="form.entry_id" class="meta">来自报销条目，金额为入账时快照。</p>
+          <p v-if="form.entry_id" class="meta">来自报销条目：金额、摘要、分组以条目为准，请到条目里改。</p>
           <div class="modal-actions">
             <button class="btn" type="button" @click="formOpen = false">取消</button>
             <button class="btn btn-primary" type="button" :disabled="saving" @click="saveForm">{{ saving ? '保存中…' : '保存' }}</button>

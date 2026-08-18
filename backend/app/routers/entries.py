@@ -7,6 +7,7 @@ from ..logging_config import get_logger
 from ..models import EntryCreate, EntryOut, EntryUpdate, ReparseAmountRequest
 from ..services.amount import apply_auto_amount, extract_invoice_amount
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
+from ..services.ledger_link import delete_entry_ledger, sync_entry_ledger
 from ..services.serializers import completeness_from_types, material_to_out
 from ..services.storage import delete_stored_files
 router = APIRouter(prefix="/api/entries", tags=["entries"])
@@ -165,6 +166,7 @@ def update_entry(entry_id: int, body: EntryUpdate):
                 entry_id,
             ),
         )
+        sync_entry_ledger(conn, entry_id)
         log.info("updated entry id=%s", entry_id)
         return _entry_payload(conn, entry_id)
 
@@ -202,6 +204,7 @@ def reparse_amount(entry_id: int, body: ReparseAmountRequest | None = None):
             """,
             (val, val, now_iso(), entry_id),
         )
+        sync_entry_ledger(conn, entry_id)
         log.info("reparsed amount entry_id=%s amount=%s force=%s", entry_id, val, force)
         return _entry_payload(conn, entry_id)
 
@@ -213,6 +216,7 @@ def delete_entry(entry_id: int, background_tasks: BackgroundTasks):
             "SELECT stored_path FROM materials WHERE entry_id = ?",
             (entry_id,),
         ).fetchall()
+        delete_entry_ledger(conn, entry_id)
         cur = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="entry not found")

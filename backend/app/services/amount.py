@@ -210,4 +210,7 @@ def apply_auto_amount(
         """,
         (val, val, now_iso(), entry_id),
     )
+    from .ledger_link import sync_entry_ledger
+
+    sync_entry_ledger(conn, entry_id)
     log.info("auto amount entry_id=%s amount=%s", entry_id, val)
