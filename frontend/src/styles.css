@@ -731,6 +731,22 @@ button, input, select, textarea { font: inherit; }
   display: flex;
   align-items: center;
   gap: 0.65rem;
+  flex-wrap: wrap;
+}
+.form-template-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.form-template-pick select {
+  min-width: 10rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 0.45rem;
+  background: #fff;
+  font: inherit;
+  font-size: 0.875rem;
 }
 .form-preview-toggle {
   display: inline-flex;
@@ -861,6 +877,17 @@ button, input, select, textarea { font: inherit; }
 .form-template-editor:first-of-type {
   border-top: none;
   padding-top: 0;
+}
+.form-template-footer {
+  justify-content: flex-start;
+  gap: 0.6rem;
+  margin-top: 0.85rem;
+}
+.form-template-editor .slot-editor-head {
+  flex-wrap: wrap;
+}
+.form-template-editor .slot-editor-head .btn {
+  margin-left: auto;
 }
 .form-def-row {
   display: grid;

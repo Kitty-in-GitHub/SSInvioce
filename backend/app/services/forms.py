@@ -172,6 +172,8 @@ def _normalize_table(raw: Any, fallback: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_form_templates(raw: Any) -> list[dict[str, Any]]:
     defaults = {t["id"]: t for t in default_form_templates()}
+    student = defaults[DEFAULT_FORM_ID]
+    student_docx = Path(student["docx"]).name
     items = raw if isinstance(raw, list) else []
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -182,15 +184,35 @@ def normalize_form_templates(raw: Any) -> list[dict[str, Any]]:
         if not tid or tid in seen:
             continue
         seen.add(tid)
-        fb = defaults.get(tid) or default_form_templates()[0]
-        docx = str(item.get("docx") or fb.get("docx") or f"{tid}.docx").strip()
+        is_builtin = tid in defaults
+        if is_builtin:
+            fb = defaults[tid]
+            docx = str(item.get("docx") or fb.get("docx") or f"{tid}.docx").strip()
+        else:
+            # Custom templates must not share the builtin Word filename.
+            fields_raw = item.get("fields")
+            tables_raw = item.get("tables")
+            fb = {
+                "id": tid,
+                "name": item.get("name") or tid,
+                "docx": f"{tid}.docx",
+                "fields": fields_raw
+                if isinstance(fields_raw, list) and fields_raw
+                else deepcopy(student["fields"]),
+                "tables": tables_raw
+                if isinstance(tables_raw, list) and tables_raw
+                else deepcopy(student["tables"]),
+            }
+            docx = str(item.get("docx") or f"{tid}.docx").strip()
+            if Path(docx).name == student_docx:
+                docx = f"{tid}.docx"
         if not docx.endswith(".docx"):
             docx = f"{tid}.docx"
         tables_in = item.get("tables") if isinstance(item.get("tables"), list) else fb.get("tables") or []
         fb_tables = {t["id"]: t for t in (fb.get("tables") or [])}
         tables = []
         for i, tbl in enumerate(tables_in):
-            fallback_tbl = fb_tables.get((tbl or {}).get("id") if isinstance(tbl, dict) else "") 
+            fallback_tbl = fb_tables.get((tbl or {}).get("id") if isinstance(tbl, dict) else "")
             if fallback_tbl is None:
                 fallback_tbl = (fb.get("tables") or [None])[min(i, len(fb.get("tables") or []) - 1)] if fb.get("tables") else {
                     "id": "expenses",
@@ -255,6 +277,22 @@ def has_user_docx(template: dict[str, Any]) -> bool:
     return (TEMPLATES_DIR / template["docx"]).is_file()
 
 
+def ensure_custom_template_docx(template: dict[str, Any]) -> None:
+    """Seed custom templates with a copy of the builtin Word so fill/export works before upload."""
+    tid = template.get("id")
+    if not tid or tid == DEFAULT_FORM_ID:
+        return
+    ensure_dirs()
+    dest = TEMPLATES_DIR / Path(template.get("docx") or f"{tid}.docx").name
+    if dest.is_file():
+        return
+    builtin = BUILTIN_FORM_TEMPLATES_DIR / "student_activity_budget.docx"
+    if not builtin.is_file():
+        return
+    shutil.copy2(builtin, dest)
+    log.info("seeded custom form docx template=%s path=%s", tid, dest)
+
+
 def save_user_docx(template_id: str, data: bytes) -> Path:
     ensure_dirs()
     template = get_form_template(template_id)
@@ -268,6 +306,9 @@ def reset_user_docx(template_id: str) -> None:
     dest = TEMPLATES_DIR / template["docx"]
     if dest.is_file():
         dest.unlink()
+    if template_id != DEFAULT_FORM_ID:
+        # Custom templates have no package builtin path; re-seed from student Word.
+        ensure_custom_template_docx(get_form_template(template_id))
 
 
 def _money_text(val: Any) -> str:
@@ -410,8 +451,9 @@ def dump_form_data(data: dict[str, Any]) -> str:
 
 def group_has_form(raw: Any, template_id: str | None = None) -> bool:
     data = parse_form_data(raw)
-    tid = template_id or DEFAULT_FORM_ID
-    return isinstance(data.get(tid), dict)
+    if template_id:
+        return isinstance(data.get(template_id), dict)
+    return any(isinstance(v, dict) for v in data.values())
 
 
 def render_docx(template: dict[str, Any], values: dict[str, Any], dest: Path | None = None) -> Path:

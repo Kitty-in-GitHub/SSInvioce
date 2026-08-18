@@ -153,6 +153,13 @@ def put_settings(body: SettingsUpdate):
     if body.classify_keywords is not None:
         patch["classify_keywords"] = body.classify_keywords
     data = update_settings(patch) if patch else get_settings()
+    if body.form_templates is not None:
+        from ..services.forms import DEFAULT_FORM_ID, ensure_custom_template_docx
+
+        for t in data.get("form_templates") or []:
+            if t.get("id") and t["id"] != DEFAULT_FORM_ID:
+                ensure_custom_template_docx(t)
+        data = get_settings()
     return _to_out(data)
 
 

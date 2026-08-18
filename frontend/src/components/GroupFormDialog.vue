@@ -8,6 +8,12 @@
             <p class="modal-sub">表头手填；支出金额按条目归类自动汇总。预览与拼版前置页由官方 Word 导出（需本机 Word / WPS / LibreOffice）；内容未改再预览会复用缓存，通常更快。</p>
           </div>
           <div class="form-fill-head-actions">
+            <label v-if="formOptions.length > 1" class="form-template-pick">
+              <span class="meta">表格</span>
+              <select v-model="selectedTemplateId" :disabled="loading || saving" @change="onTemplateChange">
+                <option v-for="t in formOptions" :key="t.id" :value="t.id">{{ t.name }}</option>
+              </select>
+            </label>
             <label class="form-preview-toggle">
               <input v-model="previewOn" type="checkbox" />
               显示预览栏
@@ -130,7 +136,9 @@ const open = computed(() => props.groupId != null)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const template = ref({ name: '', fields: [], tables: [] })
+const template = ref({ id: '', name: '', fields: [], tables: [] })
+const formOptions = ref([])
+const selectedTemplateId = ref('')
 const fields = reactive({})
 const rows = reactive({})
 const entries = ref([])
@@ -215,7 +223,8 @@ function resetLocal() {
   previewError.value = ''
   previewing.value = false
   clearPreviewUrl()
-  template.value = { name: '', fields: [], tables: [] }
+  template.value = { id: '', name: '', fields: [], tables: [] }
+  selectedTemplateId.value = ''
   dateInput.value = ''
   for (const k of Object.keys(fields)) delete fields[k]
   for (const k of Object.keys(rows)) delete rows[k]
@@ -223,7 +232,8 @@ function resetLocal() {
 }
 
 function applyPayload(data) {
-  template.value = data.template || { name: '', fields: [], tables: [] }
+  template.value = data.template || { id: '', name: '', fields: [], tables: [] }
+  if (template.value.id) selectedTemplateId.value = template.value.id
   const f = data.values?.fields || {}
   for (const k of Object.keys(fields)) delete fields[k]
   for (const field of template.value.fields || []) {
@@ -278,7 +288,7 @@ function payload() {
     }
   }
   return {
-    template_id: template.value.id,
+    template_id: template.value.id || selectedTemplateId.value,
     fields: { ...fields },
     rows: rowsOut,
     entry_rows,
@@ -301,6 +311,21 @@ async function refreshPreview() {
   }
 }
 
+async function loadFormOptions() {
+  try {
+    const res = await api.getSettings()
+    formOptions.value = (res.form_templates || []).map((t) => ({
+      id: t.id,
+      name: t.name || t.id,
+    }))
+    if (!selectedTemplateId.value && formOptions.value.length) {
+      selectedTemplateId.value = formOptions.value[0].id
+    }
+  } catch {
+    formOptions.value = []
+  }
+}
+
 async function load() {
   if (props.groupId == null) return
   loading.value = true
@@ -308,7 +333,23 @@ async function load() {
   clearPreviewUrl()
   previewError.value = ''
   try {
-    applyPayload(await api.getGroupForm(props.groupId))
+    await loadFormOptions()
+    applyPayload(await api.getGroupForm(props.groupId, selectedTemplateId.value || undefined))
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
+}
+
+async function onTemplateChange() {
+  if (props.groupId == null || !selectedTemplateId.value) return
+  loading.value = true
+  error.value = ''
+  clearPreviewUrl()
+  previewError.value = ''
+  try {
+    applyPayload(await api.getGroupForm(props.groupId, selectedTemplateId.value))
   } catch (e) {
     error.value = e.message
   } finally {
@@ -335,7 +376,8 @@ async function saveAndDownload() {
   try {
     applyPayload(await api.saveGroupForm(props.groupId, payload()))
     emit('saved')
-    const { blob, filename } = await api.downloadGroupFormDocx(props.groupId)
+    const tid = template.value.id || selectedTemplateId.value
+    const { blob, filename } = await api.downloadGroupFormDocx(props.groupId, tid)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

@@ -265,11 +265,29 @@
     </section>
 
     <section v-show="!loading && tab === 'forms'" class="settings-panel card" role="tabpanel">
-      <p class="meta settings-lead">公文表字段与支出行可增删改。Word 模板空单元格需使用对应占位符，例如 <code v-pre>{{activity_name}}</code>、<code v-pre>{{expenses.materials.reimburse}}</code>。</p>
+      <p class="meta settings-lead">可维护多套公文表。字段与支出行可增删改；自定义模板需单独上传 Word（占位符如 <code v-pre>{{activity_name}}</code>、<code v-pre>{{expenses.materials.reimburse}}</code>）。</p>
       <div v-for="(form, fIdx) in draftForms" :key="form.id" class="form-template-editor">
         <div class="slot-editor-head">
           <strong>{{ form.name }}</strong>
-          <span class="meta">{{ form.id }} · {{ form.has_user_docx ? '已替换 Word' : '使用内置 Word' }}</span>
+          <span class="meta">
+            {{ form.id }} ·
+            {{
+              form.has_user_docx
+                ? '已替换 Word'
+                : isBuiltinForm(form.id)
+                  ? '使用内置 Word'
+                  : '尚未上传 Word'
+            }}
+          </span>
+          <button
+            v-if="!isBuiltinForm(form.id)"
+            class="btn btn-sm btn-danger"
+            type="button"
+            title="删除此模板"
+            @click="removeFormTemplate(fIdx)"
+          >
+            删除模板
+          </button>
         </div>
         <div class="meta-grid slot-fields">
           <div class="field">
@@ -283,7 +301,12 @@
         </div>
         <h4 class="form-fill-h">字段</h4>
         <div v-for="(field, i) in form.fields" :key="field.id + '-' + i" class="form-def-row">
-          <input v-model="field.id" maxlength="32" placeholder="id" :disabled="['fund_code','year','month','day','activity_name'].includes(field.id)" />
+          <input
+            v-model="field.id"
+            maxlength="32"
+            placeholder="id"
+            :disabled="isBuiltinForm(form.id) && BUILTIN_LOCKED_FIELDS.has(field.id)"
+          />
           <input v-model="field.label" maxlength="40" placeholder="显示名" />
           <select v-model="field.type">
             <option value="text">文本</option>
@@ -304,15 +327,34 @@
         <button class="btn btn-sm" type="button" @click="addFormRow(form)">添加支出行</button>
         <div class="form-docx-actions">
           <label class="btn btn-sm">
-            替换 Word 模板
+            {{ form.has_user_docx || !isBuiltinForm(form.id) ? '上传 / 替换 Word' : '替换 Word 模板' }}
             <input type="file" accept=".docx" hidden @change="onFormDocx($event, form)" />
           </label>
-          <button v-if="form.has_user_docx" class="btn btn-sm" type="button" @click="resetFormDocx(form)">恢复内置 Word</button>
-          <button class="btn btn-sm" type="button" @click="resetFormSchema(form)">恢复默认字段与行</button>
+          <button v-if="form.has_user_docx" class="btn btn-sm" type="button" @click="resetFormDocx(form)">
+            {{ isBuiltinForm(form.id) ? '恢复内置 Word' : '恢复为默认 Word 副本' }}
+          </button>
+          <button
+            v-if="isBuiltinForm(form.id)"
+            class="btn btn-sm"
+            type="button"
+            @click="resetFormSchema(form)"
+          >
+            恢复默认字段与行
+          </button>
         </div>
       </div>
-      <div class="actions settings-actions">
-        <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">{{ saving ? '保存中…' : '保存表格定义' }}</button>
+      <div class="actions settings-actions form-template-footer">
+        <button
+          class="btn"
+          type="button"
+          :disabled="saving || draftForms.length >= 8"
+          @click="addFormTemplate"
+        >
+          添加表格模板
+        </button>
+        <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">
+          {{ saving ? '保存中…' : '保存表格定义' }}
+        </button>
       </div>
     </section>
   </div>
@@ -728,6 +770,82 @@ async function resetLayoutOnly() {
   } finally {
     saving.value = false
   }
+}
+
+const BUILTIN_FORM_ID = 'student_activity_budget'
+const BUILTIN_LOCKED_FIELDS = new Set(['fund_code', 'year', 'month', 'day', 'activity_name'])
+
+function isBuiltinForm(id) {
+  return id === BUILTIN_FORM_ID
+}
+
+function cloneDefaultFormSchema() {
+  const base = draftForms.value.find((f) => f.id === BUILTIN_FORM_ID)
+  if (base) {
+    return {
+      fields: JSON.parse(JSON.stringify(base.fields || [])),
+      tables: JSON.parse(JSON.stringify(base.tables || [])),
+    }
+  }
+  return {
+    fields: [
+      { id: 'activity_name', label: '活动名称', type: 'text' },
+      { id: 'year', label: '年', type: 'text' },
+      { id: 'month', label: '月', type: 'text' },
+      { id: 'day', label: '日', type: 'text' },
+    ],
+    tables: [
+      {
+        id: 'expenses',
+        label: '支出',
+        columns: [
+          { id: 'item', label: '支出内容', type: 'label' },
+          { id: 'amount', label: '金额', type: 'money' },
+          { id: 'reimburse', label: '核销金额', type: 'money' },
+          { id: 'remark', label: '备注', type: 'text' },
+        ],
+        rows: [{ id: 'other', label: '其他', remark: '' }],
+        total: true,
+      },
+    ],
+  }
+}
+
+function nextFormTemplateId() {
+  const used = new Set(draftForms.value.map((f) => f.id))
+  let n = draftForms.value.length + 1
+  let id = `form_${n}`
+  while (used.has(id)) {
+    n += 1
+    id = `form_${n}`
+  }
+  return id
+}
+
+function addFormTemplate() {
+  if (draftForms.value.length >= 8) {
+    error.value = '最多 8 套表格模板'
+    return
+  }
+  const id = nextFormTemplateId()
+  const schema = cloneDefaultFormSchema()
+  draftForms.value.push({
+    id,
+    name: `新表格 ${draftForms.value.length}`,
+    docx: `${id}.docx`,
+    fields: schema.fields,
+    tables: schema.tables,
+    has_user_docx: false,
+  })
+  msg.value = `已添加「${id}」，请保存定义后上传对应 Word 模板`
+  error.value = ''
+}
+
+function removeFormTemplate(idx) {
+  const form = draftForms.value[idx]
+  if (!form || isBuiltinForm(form.id)) return
+  draftForms.value.splice(idx, 1)
+  msg.value = `已移除「${form.name}」，点击保存后生效`
 }
 
 function addFormField(form) {

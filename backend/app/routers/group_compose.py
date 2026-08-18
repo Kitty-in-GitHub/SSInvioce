@@ -10,7 +10,6 @@ from ..db import get_conn
 from ..logging_config import get_logger
 from ..routers.compose import materials_by_slot, require_exportable
 from ..services.forms import (
-    DEFAULT_FORM_ID,
     FormError,
     apply_auto_reimburse,
     auto_reimburse_map,
@@ -19,7 +18,7 @@ from ..services.forms import (
     merge_form_values,
     parse_form_data,
 )
-from ..services.settings_store import get_layout
+from ..services.settings_store import get_form_templates, get_layout
 
 router = APIRouter(prefix="/api/groups", tags=["groups-compose"])
 log = get_logger("groups")
@@ -77,18 +76,23 @@ def compose_group(group_id: int):
             (group_id,),
         ).fetchall()
 
-    prepend_pdf = None
+    prepend_pdfs = []
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     gname = _safe_filename(group_name)
-    saved_form = form_data.get(DEFAULT_FORM_ID)
-    if isinstance(saved_form, dict):
+    for tmpl in get_form_templates():
+        tid = tmpl.get("id")
+        if not tid:
+            continue
+        saved_form = form_data.get(tid)
+        if not isinstance(saved_form, dict):
+            continue
         try:
-            template = get_form_template(DEFAULT_FORM_ID)
+            template = get_form_template(tid)
             values = apply_auto_reimburse(
                 merge_form_values(template, saved_form),
                 auto_reimburse_map([dict(r) for r in entry_rows], template),
             )
-            prepend_pdf = filled_form_to_pdf(template, values, group_id=group_id)
+            prepend_pdfs.append(filled_form_to_pdf(template, values, group_id=group_id))
         except FormError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -100,7 +104,7 @@ def compose_group(group_id: int):
             items,
             out_name=out_name,
             layout=get_layout(),
-            prepend_pdf=prepend_pdf,
+            prepend_pdfs=prepend_pdfs or None,
         )
     except ComposeError as exc:
         log.exception("group compose failed group_id=%s", group_id)
@@ -109,6 +113,11 @@ def compose_group(group_id: int):
             detail={"message": str(exc), "missing": exc.missing},
         ) from exc
 
-    log.info("group compose ok group_id=%s items=%s form=%s", group_id, len(items), bool(prepend_pdf))
+    log.info(
+        "group compose ok group_id=%s items=%s forms=%s",
+        group_id,
+        len(items),
+        len(prepend_pdfs),
+    )
     filename = f"{gname}_拼版_{stamp}.pdf"
     return FileResponse(out, media_type="application/pdf", filename=filename)

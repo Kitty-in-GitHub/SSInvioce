@@ -192,17 +192,21 @@ export const api = {
     const filename = decodeURIComponent(match?.[1] || match?.[2] || `group_${groupId}.pdf`)
     return { blob, filename }
   },
-  getGroupForm: (groupId) => request(`/api/groups/${groupId}/forms`),
+  getGroupForm: (groupId, templateId) => {
+    const q = templateId ? `?template_id=${encodeURIComponent(templateId)}` : ''
+    return request(`/api/groups/${groupId}/forms${q}`)
+  },
   saveGroupForm: (groupId, payload) =>
     request(`/api/groups/${groupId}/forms`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
-  downloadGroupFormDocx: async (groupId) => {
+  downloadGroupFormDocx: async (groupId, templateId) => {
     let res
+    const q = templateId ? `?template_id=${encodeURIComponent(templateId)}` : ''
     try {
-      res = await fetch(`/api/groups/${groupId}/forms/docx`, { method: 'POST' })
+      res = await fetch(`/api/groups/${groupId}/forms/docx${q}`, { method: 'POST' })
     } catch (e) {
       throw new Error(`无法连接后端下载表格：${e.message}`)
     }

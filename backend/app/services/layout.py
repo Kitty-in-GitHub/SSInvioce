@@ -323,14 +323,20 @@ def compose_batch_pdf(
     out_name: str = "batch_compose.pdf",
     layout: dict | None = None,
     prepend_pdf: Path | None = None,
+    prepend_pdfs: list[Path] | None = None,
 ) -> Path:
     if not items:
         raise ComposeError("no pages to compose")
     ensure_dirs()
     fitz = _fitz()
     doc = fitz.open()
+    paths: list[Path] = []
+    if prepend_pdfs:
+        paths.extend(p for p in prepend_pdfs if p)
     if prepend_pdf:
-        extra = fitz.open(prepend_pdf)
+        paths.append(prepend_pdf)
+    for path in paths:
+        extra = fitz.open(path)
         try:
             doc.insert_pdf(extra)
         finally:
