@@ -15,7 +15,10 @@
 
     <div v-if="loading" class="meta">加载中…</div>
     <template v-else>
-      <div class="list-board">
+      <div
+        ref="listBoardEl"
+        class="list-board"
+      >
         <div v-if="entries.length" class="list-toolbar">
           <div class="list-toolbar-select">
             <button class="btn btn-sm" type="button" :disabled="!entries.length" @click="toggleSelectAll">
@@ -49,7 +52,11 @@
             v-for="section in sections"
             :key="section.key"
             class="group-section"
-            :class="{ collapsed: isCollapsed(section.key) }"
+            :data-section-key="section.key"
+            :class="{
+              collapsed: isCollapsed(section.key),
+              'drop-target': dropTargetKey === section.key,
+            }"
           >
             <header class="group-head">
               <div class="group-head-lead">
@@ -191,7 +198,13 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="e in section.entries" :key="e.id" class="entry-row">
+                    <tr
+                      v-for="e in section.entries"
+                      :key="e.id"
+                      class="entry-row"
+                      :class="{ 'is-selected': selectedIds.includes(e.id) }"
+                      :data-entry-id="e.id"
+                    >
                       <td class="col-check">
                         <label class="entry-check">
                           <input
@@ -303,6 +316,25 @@
         </div>
       </div>
     </template>
+    <Teleport to="body">
+      <div
+        v-if="marqueeRect"
+        class="marquee-rect"
+        :style="{
+          left: `${marqueeRect.left}px`,
+          top: `${marqueeRect.top}px`,
+          width: `${marqueeRect.width}px`,
+          height: `${marqueeRect.height}px`,
+        }"
+      />
+      <div
+        v-if="dragBadge"
+        class="entry-drag-badge"
+        :style="{ left: `${dragBadge.x}px`, top: `${dragBadge.y}px` }"
+      >
+        移动 {{ selectedIds.length }} 条
+      </div>
+    </Teleport>
     <GroupFormDialog :group-id="formGroupId" @close="formGroupId = null" @saved="load" />
     <Teleport to="body">
       <div
@@ -509,6 +541,30 @@ const moveMode = ref('existing')
 const moveTargetGroupId = ref('')
 const moveNewGroupName = ref('')
 const moveNewGroupInputEl = ref(null)
+const listBoardEl = ref(null)
+const marqueeRect = ref(null)
+const dropTargetKey = ref('')
+const dragBadge = ref(null)
+
+const GESTURE_THRESHOLD = 5
+const INTERACTIVE_SELECTOR = [
+  'button',
+  'input',
+  'select',
+  'textarea',
+  '.slot-mark',
+  '.entry-check',
+  '.group-head-actions',
+  '.group-check',
+  '.group-collapse-btn',
+  '.group-title-btn',
+  '.group-title-input',
+  '.add-plus',
+  '.inline-create',
+].join(', ')
+const OVERLAY_SELECTOR = '.modal-backdrop, [role="dialog"]'
+
+let boardGesture = null
 
 const draftingEntryKey = ref(null)
 const draftEntryTitle = ref('')
@@ -656,6 +712,265 @@ function toggleSelect(e) {
     selectedIds.value = selectedIds.value.filter((id) => id !== e.id)
   } else {
     selectedIds.value = [...selectedIds.value, e.id]
+  }
+}
+
+function isInteractiveGestureTarget(el) {
+  return !!el?.closest?.(INTERACTIVE_SELECTOR)
+}
+
+function isOverlayGestureTarget(el) {
+  return !!el?.closest?.(OVERLAY_SELECTOR)
+}
+
+function rangeFromPoint(x, y) {
+  if (typeof document.caretRangeFromPoint === 'function') {
+    return document.caretRangeFromPoint(x, y)
+  }
+  if (typeof document.caretPositionFromPoint === 'function') {
+    const pos = document.caretPositionFromPoint(x, y)
+    if (!pos?.offsetNode) return null
+    const range = document.createRange()
+    try {
+      range.setStart(pos.offsetNode, pos.offset)
+      range.collapse(true)
+    } catch {
+      return null
+    }
+    return range
+  }
+  return null
+}
+
+function isOnTextGlyph(x, y) {
+  const range = rangeFromPoint(x, y)
+  if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) return false
+  const node = range.startContainer
+  const text = node.textContent || ''
+  if (!text.length) return false
+  const offset = range.startOffset
+  const indices = []
+  if (offset < text.length) indices.push(offset)
+  if (offset > 0) indices.push(offset - 1)
+  const pad = 2
+  for (const i of indices) {
+    const ch = text[i]
+    if (!ch || ch === '\n' || ch === '\r') continue
+    const probe = document.createRange()
+    probe.setStart(node, i)
+    probe.setEnd(node, i + 1)
+    for (const rect of probe.getClientRects()) {
+      if (
+        x >= rect.left - pad &&
+        x <= rect.right + pad &&
+        y >= rect.top - pad &&
+        y <= rect.bottom + pad
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function clientMarqueeBox(sx, sy, x, y) {
+  return {
+    left: Math.min(sx, x),
+    top: Math.min(sy, y),
+    right: Math.max(sx, x),
+    bottom: Math.max(sy, y),
+  }
+}
+
+function rectsIntersect(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
+function entryIdsInClientRect(box) {
+  const board = listBoardEl.value
+  if (!board) return []
+  const ids = []
+  for (const row of board.querySelectorAll('tr.entry-row')) {
+    const r = row.getBoundingClientRect()
+    if (r.width < 2 || r.height < 2) continue
+    if (!rectsIntersect(box, r)) continue
+    const id = Number(row.dataset.entryId)
+    if (Number.isFinite(id)) ids.push(id)
+  }
+  return ids
+}
+
+function applyMarqueeSelection(ids, additive, baseIds) {
+  if (!additive) {
+    selectedIds.value = ids
+    return
+  }
+  const set = new Set(baseIds)
+  for (const id of ids) set.add(id)
+  selectedIds.value = [...set]
+}
+
+function sectionKeyFromPoint(clientX, clientY) {
+  const el = document.elementFromPoint(clientX, clientY)
+  return el?.closest?.('.group-section')?.dataset?.sectionKey || ''
+}
+
+function groupIdFromSectionKey(key) {
+  if (!key || key === 'ungrouped') return null
+  if (key.startsWith('g-')) {
+    const n = Number(key.slice(2))
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function expandSection(key) {
+  if (!key || !collapsedKeys.value.has(key)) return
+  const next = new Set(collapsedKeys.value)
+  next.delete(key)
+  collapsedKeys.value = next
+  persistCollapsed()
+}
+
+function selectionAlreadyInGroup(groupId) {
+  const ids = new Set(selectedIds.value)
+  const selected = entries.value.filter((e) => ids.has(e.id))
+  if (!selected.length) return true
+  return selected.every((e) => (e.group_id ?? null) === groupId)
+}
+
+function updateMarqueeVisual(sx, sy, x, y) {
+  marqueeRect.value = {
+    left: Math.min(sx, x),
+    top: Math.min(sy, y),
+    width: Math.abs(x - sx),
+    height: Math.abs(y - sy),
+  }
+}
+
+function syncGestureBody() {
+  document.body.classList.toggle('is-entry-gesturing', !!boardGesture)
+  document.body.classList.toggle('is-entry-dragging', !!dragBadge.value)
+}
+
+function preventTextSelect(e) {
+  if (e.target?.closest?.('input, textarea')) return
+  e.preventDefault()
+}
+
+function endBoardGesture() {
+  window.removeEventListener('pointermove', onBoardPointerMove)
+  window.removeEventListener('pointerup', onBoardPointerUp)
+  window.removeEventListener('pointercancel', onBoardPointerUp)
+  document.removeEventListener('selectstart', preventTextSelect)
+  marqueeRect.value = null
+  dropTargetKey.value = ''
+  dragBadge.value = null
+  boardGesture = null
+  syncGestureBody()
+}
+
+function suppressNextClick() {
+  const block = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  window.addEventListener('click', block, { capture: true, once: true })
+}
+
+function onBoardPointerDown(ev) {
+  if (ev.button !== 0) return
+  if (batchMoving.value || batchDeleting.value || batchComposing.value) return
+  if (isOverlayGestureTarget(ev.target)) return
+  if (isInteractiveGestureTarget(ev.target)) return
+  if (isOnTextGlyph(ev.clientX, ev.clientY)) return
+  const row = ev.target.closest?.('tr.entry-row')
+  const startEntryId = row ? Number(row.dataset.entryId) : null
+  const validId = Number.isFinite(startEntryId) ? startEntryId : null
+  const onLink = !!ev.target.closest?.('a')
+  boardGesture = {
+    sx: ev.clientX,
+    sy: ev.clientY,
+    additive: ev.ctrlKey || ev.metaKey,
+    startEntryId: validId,
+    startWasSelected: validId != null && selectedIds.value.includes(validId),
+    baseIds: [...selectedIds.value],
+    mode: 'pending',
+    fromLink: onLink,
+  }
+  ev.preventDefault()
+  window.getSelection()?.removeAllRanges?.()
+  document.addEventListener('selectstart', preventTextSelect)
+  window.addEventListener('pointermove', onBoardPointerMove, { passive: false })
+  window.addEventListener('pointerup', onBoardPointerUp)
+  window.addEventListener('pointercancel', onBoardPointerUp)
+  syncGestureBody()
+}
+
+function onBoardPointerMove(ev) {
+  const g = boardGesture
+  if (!g) return
+  const dist = Math.hypot(ev.clientX - g.sx, ev.clientY - g.sy)
+  if (g.mode === 'pending') {
+    if (dist < GESTURE_THRESHOLD) return
+    ev.preventDefault()
+    window.getSelection()?.removeAllRanges?.()
+    g.dragged = true
+    if (g.startEntryId != null && g.startWasSelected) {
+      g.mode = 'drag'
+      dragBadge.value = { x: ev.clientX + 12, y: ev.clientY + 12 }
+      syncGestureBody()
+    } else {
+      g.mode = 'marquee'
+      updateMarqueeVisual(g.sx, g.sy, ev.clientX, ev.clientY)
+      applyMarqueeSelection(entryIdsInClientRect(clientMarqueeBox(g.sx, g.sy, ev.clientX, ev.clientY)), g.additive, g.baseIds)
+    }
+    return
+  }
+  ev.preventDefault()
+  window.getSelection()?.removeAllRanges?.()
+  if (g.mode === 'marquee') {
+    updateMarqueeVisual(g.sx, g.sy, ev.clientX, ev.clientY)
+    applyMarqueeSelection(entryIdsInClientRect(clientMarqueeBox(g.sx, g.sy, ev.clientX, ev.clientY)), g.additive, g.baseIds)
+    return
+  }
+  if (g.mode === 'drag') {
+    dragBadge.value = { x: ev.clientX + 12, y: ev.clientY + 12 }
+    const key = sectionKeyFromPoint(ev.clientX, ev.clientY)
+    dropTargetKey.value = key
+    if (key) expandSection(key)
+  }
+}
+
+function onBoardPointerUp(ev) {
+  const g = boardGesture
+  if (!g) return
+  const mode = g.mode
+  const startEntryId = g.startEntryId
+  const additive = g.additive
+  const dropKey = dropTargetKey.value
+  const dragged = !!g.dragged
+  const fromLink = !!g.fromLink
+  endBoardGesture()
+  if (dragged) suppressNextClick()
+  if (mode === 'pending') {
+    if (fromLink) return
+    if (startEntryId != null) {
+      if (additive) toggleSelect({ id: startEntryId })
+      else selectedIds.value = [startEntryId]
+    } else if (!additive) {
+      selectedIds.value = []
+    }
+    return
+  }
+  if (mode === 'marquee') return
+  if (mode === 'drag') {
+    if (!selectedIds.value.length || !dropKey) return
+    const groupId = groupIdFromSectionKey(dropKey)
+    if (selectionAlreadyInGroup(groupId)) return
+    const label =
+      groupId == null ? '未分组' : groups.value.find((x) => x.id === groupId)?.name || `分组 #${groupId}`
+    void moveSelectedToGroup(groupId, label)
   }
 }
 
@@ -1082,8 +1397,11 @@ async function composeGroup(g) {
 onMounted(() => {
   load()
   window.addEventListener('keydown', onMoveDialogKeydown)
+  document.addEventListener('pointerdown', onBoardPointerDown, true)
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onMoveDialogKeydown)
+  document.removeEventListener('pointerdown', onBoardPointerDown, true)
+  endBoardGesture()
 })
 </script>

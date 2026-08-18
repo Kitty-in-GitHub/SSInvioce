@@ -1240,12 +1240,54 @@ button, input, select, textarea { font: inherit; }
 }
 
 .list-board {
+  position: relative;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
   box-shadow: var(--shadow);
   min-width: 0;
+}
+.list-board a {
+  -webkit-user-drag: none;
+}
+body.is-entry-gesturing {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+body.is-entry-dragging {
+  cursor: grabbing;
+}
+.marquee-rect {
+  position: fixed;
+  z-index: 1200;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 2px;
+}
+.entry-drag-badge {
+  position: fixed;
+  z-index: 1300;
+  pointer-events: none;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  box-shadow: 0 6px 16px rgba(10, 15, 26, 0.22);
+  white-space: nowrap;
+  transform: translate(0, 0);
+}
+.group-section.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
+.group-section.drop-target .group-head {
+  background: var(--accent-soft);
 }
 .list-toolbar {
   display: flex;
@@ -1524,6 +1566,8 @@ a.link-btn {
 }
 .entry-table tbody tr:last-child td { border-bottom: none; }
 .entry-table tbody tr:hover { background: #f5f7fb; }
+.entry-table tbody tr.is-selected { background: #e8eef8; }
+.entry-table tbody tr.is-selected:hover { background: #dde6f4; }
 .entry-table .col-check {
   width: 2.25rem;
   text-align: center;
