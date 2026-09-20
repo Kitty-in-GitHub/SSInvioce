@@ -4,8 +4,21 @@ cd /d "%~dp0"
 
 set "CONDA_ENV=star-invoice"
 set "VENV_PY=%~dp0.venv\Scripts\python.exe"
-set "NPM=D:\Miniconda\envs\%CONDA_ENV%\npm.cmd"
 set "API_PORT=8765"
+
+rem Locate npm: NPM_CMD override, then PATH, then common conda roots
+set "NPM=%NPM_CMD%"
+if not defined NPM for /f "delims=" %%I in ('where npm.cmd 2^>nul') do if not defined NPM set "NPM=%%I"
+if not defined NPM if defined CONDA_PREFIX if exist "%CONDA_PREFIX%\npm.cmd" set "NPM=%CONDA_PREFIX%\npm.cmd"
+if not defined NPM for %%D in ("%USERPROFILE%\miniconda3" "%USERPROFILE%\anaconda3" "%USERPROFILE%\.conda" "%LOCALAPPDATA%\miniconda3" "C:\ProgramData\miniconda3" "C:\ProgramData\anaconda3" "D:\Miniconda") do (
+  if not defined NPM if exist "%%~D\envs\%CONDA_ENV%\npm.cmd" set "NPM=%%~D\envs\%CONDA_ENV%\npm.cmd"
+)
+if not defined NPM (
+  echo [error] npm.cmd not found. Install Node.js, or run: conda env create -f environment.yml
+  echo         You can also set NPM_CMD to the full path of npm.cmd.
+  pause
+  exit /b 1
+)
 
 if not exist "%VENV_PY%" (
   echo [setup] creating .venv ...
@@ -14,7 +27,7 @@ if not exist "%VENV_PY%" (
 )
 
 if not exist "%~dp0frontend\node_modules\" (
-  echo [setup] npm install in conda env %CONDA_ENV% ...
+  echo [setup] npm install via "%NPM%" ...
   pushd frontend
   call "%NPM%" install
   popd
