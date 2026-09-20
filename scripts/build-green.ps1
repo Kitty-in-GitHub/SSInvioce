@@ -164,6 +164,13 @@ Push-Location $OutDir
 try {
     & $py -c "from backend.app.main import app; from backend.app.services.ocr import ocr_available; print('app_ok', ocr_available())"
     if ($LASTEXITCODE -ne 0) { throw "portable import smoke test failed" }
+
+    # DOCX -> PDF export goes through win32com (Word / WPS), which is imported lazily
+    # so the check above cannot catch it. Verify pywin32's COM stack really loads here.
+    & $py -c "import pythoncom, win32com.client; pythoncom.CoInitialize(); win32com.client.Dispatch('Shell.Application'); print('com_ok')"
+    if ($LASTEXITCODE -ne 0) {
+        throw "pywin32 COM check failed in the portable runtime - DOCX->PDF via Word/WPS would not work. Try: runtime\python.exe runtime\Scripts\pywin32_postinstall.py -install"
+    }
 }
 finally { Pop-Location }
 
