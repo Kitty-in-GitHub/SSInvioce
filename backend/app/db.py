@@ -117,6 +117,31 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
             CREATE INDEX IF NOT EXISTS idx_asset_txns_asset ON asset_txns(asset_id, id);
+
+            CREATE TABLE IF NOT EXISTS trash (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_id TEXT NOT NULL,
+                trash_path TEXT NOT NULL,
+                original_path TEXT NOT NULL,
+                entry_id INTEGER,
+                entry_title TEXT,
+                type TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                mime TEXT NOT NULL DEFAULT '',
+                width INTEGER,
+                height INTEGER,
+                size INTEGER,
+                original_created_at TEXT,
+                deleted_at TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                invoice_number TEXT,
+                invoice_code TEXT,
+                content_sha256 TEXT,
+                features_json TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_trash_deleted_at ON trash(deleted_at);
+            CREATE INDEX IF NOT EXISTS idx_trash_batch ON trash(batch_id);
             """
         )
         _ensure_column(conn, "entries", "group_id", "INTEGER")
@@ -130,11 +155,15 @@ def init_db() -> None:
         _ensure_column(conn, "materials", "invoice_code", "TEXT")
         _ensure_column(conn, "materials", "content_sha256", "TEXT")
         _ensure_column(conn, "materials", "analyze_status", "TEXT")
+        _ensure_column(conn, "materials", "features_json", "TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_entries_group_id ON entries(group_id)"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_materials_invoice_number ON materials(invoice_number)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_materials_content_sha256 ON materials(content_sha256)"
         )
         _seed_ledger_categories(conn)
 

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import re
+import shutil
 import uuid
 from pathlib import Path
 
 from PIL import Image
 
-from ..config import UPLOADS_DIR, ensure_dirs
+from ..config import DATA_DIR, TRASH_DIR, UPLOADS_DIR, ensure_dirs
+from ..logging_config import get_logger
+
+log = get_logger("storage")
 
 SAFE_NAME_RE = re.compile(r"[^\w.\u4e00-\u9fff\-]+", re.UNICODE)
 
@@ -63,3 +67,63 @@ def delete_file(rel_path: str) -> None:
             path.unlink()
     except Exception:
         pass
+
+
+def move_to_trash(rel_path: str) -> dict | None:
+    """Move an uploads-relative file into data/trash; returns path+size or None."""
+    if not rel_path:
+        return None
+    try:
+        src = resolve_stored(rel_path)
+    except ValueError:
+        return None
+    if not src.is_file():
+        return None
+    ensure_dirs()
+    dest = TRASH_DIR / f"{uuid.uuid4().hex}_{src.name}"
+    try:
+        size = src.stat().st_size
+        shutil.move(str(src), str(dest))
+    except OSError:
+        log.exception("move to trash failed path=%s", rel_path)
+        return None
+    return {"trash_path": dest.relative_to(DATA_DIR).as_posix(), "size": size}
+
+
+def resolve_trash(trash_path: str) -> Path | None:
+    if not trash_path:
+        return None
+    try:
+        path = (DATA_DIR / trash_path).resolve()
+    except OSError:
+        return None
+    if not str(path).startswith(str(TRASH_DIR.resolve())):
+        return None
+    return path
+
+
+def restore_from_trash(trash_path: str, original_name: str, entry_id: int | None) -> str | None:
+    """Move a trashed file back under data/uploads; returns new stored_path."""
+    src = resolve_trash(trash_path)
+    if src is None or not src.is_file():
+        return None
+    ensure_dirs()
+    folder = UPLOADS_DIR / (str(entry_id) if entry_id is not None else "inbox")
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f"{uuid.uuid4().hex}_{safe_filename(original_name)}"
+    try:
+        shutil.move(str(src), str(dest))
+    except OSError:
+        log.exception("restore from trash failed path=%s", trash_path)
+        return None
+    return dest.relative_to(UPLOADS_DIR).as_posix()
+
+
+def purge_trash_file(trash_path: str) -> None:
+    path = resolve_trash(trash_path)
+    if path is None or not path.is_file():
+        return
+    try:
+        path.unlink()
+    except OSError:
+        log.exception("purge trash file failed path=%s", trash_path)

@@ -11,7 +11,7 @@ from .config import FRONTEND_DIST, ensure_dirs
 from .db import init_db
 from .logging_config import get_logger, setup_logging
 from .middleware import RequestLogMiddleware
-from .routers import assets, backup, classify, compose, entries, group_compose, group_forms, groups, ledger, materials, settings
+from .routers import assets, backup, classify, compose, entries, group_compose, group_forms, groups, ledger, materials, settings, trash
 
 SERVICE_NAME = "star-invoice-helper"
 SERVICE_VERSION = "0.1.0"
@@ -28,14 +28,17 @@ async def lifespan(_app: FastAPI):
     init_caches()
     removed = cleanup_all()
     from .services.analyze_jobs import resume_pending_analyze_jobs, shutdown_analyze_jobs
+    from .services.trash import cleanup as cleanup_trash
 
     resumed = resume_pending_analyze_jobs()
+    trash_removed = cleanup_trash()
     log.info(
-        "service=%s version=%s ready cache_cleaned=%s analyze_resumed=%s",
+        "service=%s version=%s ready cache_cleaned=%s analyze_resumed=%s trash_cleaned=%s",
         SERVICE_NAME,
         SERVICE_VERSION,
         removed,
         resumed,
+        trash_removed,
     )
     yield
     shutdown_analyze_jobs()
@@ -64,6 +67,7 @@ app.include_router(ledger.router)
 app.include_router(assets.router)
 app.include_router(backup.router)
 app.include_router(settings.router)
+app.include_router(trash.router)
 
 
 @app.get("/api/health")

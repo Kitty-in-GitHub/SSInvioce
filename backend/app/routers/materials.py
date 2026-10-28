@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
@@ -17,6 +18,7 @@ from ..services.features import extract_features, file_sha256, normalize_invoice
 from ..services.serializers import material_to_out
 from ..services.settings_store import invoice_slot_id
 from ..services.storage import delete_file, delete_stored_files, probe_image_size, resolve_stored, store_upload
+from ..services.trash import trash_material
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 log = get_logger("materials")
@@ -172,7 +174,8 @@ def update_material(material_id: int, body: MaterialAssign):
             """
             UPDATE materials
             SET entry_id = ?, type = ?, stored_path = ?,
-                invoice_number = ?, invoice_code = ?, content_sha256 = ?
+                invoice_number = ?, invoice_code = ?, content_sha256 = ?,
+                analyze_status = CASE WHEN ? IS NULL THEN analyze_status ELSE 'done' END
             WHERE id = ?
             """,
             (
@@ -182,6 +185,7 @@ def update_material(material_id: int, body: MaterialAssign):
                 normalize_invoice_digits(inv_no) if new_type == invoice_slot_id() else None,
                 normalize_invoice_digits(inv_code) if new_type == invoice_slot_id() else None,
                 digest,
+                new_entry,
                 material_id,
             ),
         )
@@ -280,17 +284,20 @@ def get_material_file(material_id: int):
 
 
 @router.delete("/{material_id}")
-def delete_material(material_id: int, background_tasks: BackgroundTasks):
+def delete_material(material_id: int):
+    batch_id = uuid.uuid4().hex
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM materials WHERE id = ?", (material_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="material not found")
+        data = dict(row)
+        if not trash_material(conn, data, reason="material_deleted", batch_id=batch_id):
+            delete_file(data["stored_path"])
         conn.execute("DELETE FROM materials WHERE id = ?", (material_id,))
-        if row["entry_id"] is not None:
+        if data["entry_id"] is not None:
             conn.execute(
                 "UPDATE entries SET updated_at = ? WHERE id = ?",
-                (now_iso(), row["entry_id"]),
+                (now_iso(), data["entry_id"]),
             )
-        rel = row["stored_path"]
-    background_tasks.add_task(delete_file, rel)
+    log.info("deleted material id=%s -> trash batch=%s", material_id, batch_id)
     return {"ok": True}

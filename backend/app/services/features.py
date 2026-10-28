@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -48,6 +49,12 @@ ORDER_NO_RE = re.compile(
     re.UNICODE,
 )
 INVOICE_NUMBER_RE = re.compile(r"发票号码[:：\s]*([0-9０-９]{8,30})", re.UNICODE)
+# 新版电子发票把标签和值分到不同文本块，号码会与开票日期粘在一起：
+# "<20位号码><YYYY>年<MM>月<DD>日"
+INVOICE_NUMBER_MERGED_RE = re.compile(
+    r"(?<!\d)(\d{20})(?=20\d{2}年\d{1,2}月\d{1,2}日)",
+    re.UNICODE,
+)
 INVOICE_CODE_RE = re.compile(r"发票代码[:：\s]*([0-9０-９]{8,20})", re.UNICODE)
 
 _FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
@@ -103,6 +110,40 @@ class FileFeatures:
         }
 
 
+def feature_to_json(feat: FileFeatures) -> str:
+    """Serialize features into materials.features_json (used by staging/inbox)."""
+    payload = feat.to_public()
+    payload["suggested_type"] = feat.suggested_type
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def feature_from_json(raw: str | None) -> FileFeatures | None:
+    """Rebuild FileFeatures from materials.features_json; None when absent/broken."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return FileFeatures(
+        temp_id="",
+        suggested_type=str(data.get("suggested_type") or "unknown"),
+        amount=data.get("amount"),
+        merchant=data.get("merchant"),
+        product_name=data.get("product_name"),
+        date=data.get("date"),
+        order_no=data.get("order_no"),
+        invoice_number=data.get("invoice_number"),
+        invoice_code=data.get("invoice_code"),
+        content_sha256=data.get("content_sha256"),
+        text_preview=str(data.get("text_preview") or ""),
+        ocr_used=bool(data.get("ocr_used")),
+        text_source=str(data.get("text_source") or "none"),
+    )
+
+
 def _pick_type_from_text(text: str, filename: str, width: int | None, height: int | None) -> MaterialType:
     compact = re.sub(r"\s+", "", text or "")
     from .settings_store import file_kind_for, get_slots, invoice_slot_id
@@ -135,6 +176,9 @@ def _pick_type_from_text(text: str, filename: str, width: int | None, height: in
 
 def _clean_org_name(name: str) -> str | None:
     name = re.sub(r"\s+", "", name or "").strip(" :：|-_")
+    # 标签本身被当成"名称:"的值抓到时丢弃
+    if name in {"名称", "购买方", "销售方", "信息", "购买方信息", "销售方信息", "销方", "购方"}:
+        return None
     for stop in (
         "收单机构",
         "支付方式",
@@ -247,7 +291,17 @@ def normalize_invoice_digits(raw: str | None) -> str | None:
 def _extract_invoice_number(text: str) -> str | None:
     compact = re.sub(r"\s+", "", text or "")
     m = INVOICE_NUMBER_RE.search(text or "") or INVOICE_NUMBER_RE.search(compact)
-    return normalize_invoice_digits(m.group(1)) if m else None
+    if m:
+        return normalize_invoice_digits(m.group(1))
+    m = INVOICE_NUMBER_MERGED_RE.search(compact)
+    if m:
+        return normalize_invoice_digits(m.group(1))
+    # 标签存在但值被排版拆开时，退化为唯一的独立 20 位号码
+    if "发票号码" in (text or ""):
+        hits = set(re.findall(r"(?<!\d)(\d{20})(?!\d)", compact))
+        if len(hits) == 1:
+            return normalize_invoice_digits(hits.pop())
+    return None
 
 
 def _extract_invoice_code(text: str) -> str | None:

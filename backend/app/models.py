@@ -33,6 +33,7 @@ class DuplicateWarning(BaseModel):
     existing_material_id: Optional[int] = None
     existing_original_name: Optional[str] = None
     existing_mime: Optional[str] = None
+    existing_type: Optional[str] = None
     peer_temp_id: Optional[str] = None
 
 
@@ -52,6 +53,7 @@ class MaterialOut(BaseModel):
     content_sha256: Optional[str] = None
     duplicate_warning: Optional[DuplicateWarning] = None
     processing: bool = False
+    staged: bool = False
 
 
 class Completeness(BaseModel):
@@ -101,8 +103,9 @@ class ClassifyClusterMaterial(BaseModel):
 
 
 class ClassifyClusterConfirm(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(default="", max_length=200)
     amount: Optional[float] = None
+    entry_id: Optional[int] = None
     materials: list[ClassifyClusterMaterial] = Field(min_length=1)
 
 

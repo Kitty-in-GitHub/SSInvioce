@@ -89,6 +89,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteMaterial: (id) => request(`/api/materials/${id}`, { method: 'DELETE' }),
+  listTrash: () => request('/api/trash'),
+  restoreTrash: (ids) =>
+    request('/api/trash/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+  purgeTrash: (ids) =>
+    request('/api/trash/purge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+  purgeAllTrash: () => request('/api/trash', { method: 'DELETE' }),
   listAnalyzeJobs: () => request('/api/materials/jobs'),
   classifyPreview: async (files) => {
     const fd = new FormData()

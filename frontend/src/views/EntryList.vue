@@ -6,7 +6,14 @@
         <p>分组管理 · 金额统计 · 齐套拼版</p>
       </div>
       <div class="actions">
-        <button class="btn" type="button" @click="openUpload">批量上传</button>
+        <button
+          class="btn"
+          type="button"
+          :title="inboxCount ? `收件箱还有 ${inboxCount} 个未归类材料，可一并整理` : '一次上传多份材料，自动归组'"
+          @click="openUpload"
+        >
+          批量上传{{ inboxCount ? ` · 待整理 ${inboxCount}` : '' }}
+        </button>
       </div>
     </div>
 
@@ -536,6 +543,7 @@ async function onSlotFilePicked(ev) {
 const { openBatchUpload } = useBatchUploadDialog()
 const entries = ref([])
 const groups = ref([])
+const inboxCount = ref(0)
 const loading = ref(true)
 const creating = ref(false)
 const creatingGroup = ref(false)
@@ -706,7 +714,14 @@ async function load({ silent } = {}) {
   if (!useSilent) loading.value = true
   error.value = ''
   try {
-    ;[entries.value, groups.value] = await Promise.all([api.listEntries(), api.listGroups()])
+    const [entryList, groupList, inboxList] = await Promise.all([
+      api.listEntries(),
+      api.listGroups(),
+      api.listInbox(),
+    ])
+    entries.value = entryList
+    groups.value = groupList
+    inboxCount.value = (inboxList || []).length
     const valid = new Set(entries.value.map((e) => e.id))
     selectedIds.value = selectedIds.value.filter((id) => valid.has(id))
   } catch (e) {

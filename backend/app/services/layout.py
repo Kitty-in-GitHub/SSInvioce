@@ -157,6 +157,79 @@ def _invoice_content_clip(page, pad: float = 2.0):
     return clipped
 
 
+def _annot_rects(page) -> list:
+    """Rects of the annotations on a page, in PyMuPDF page coordinates."""
+    fitz = _fitz()
+    out = []
+    try:
+        for annot in page.annots() or []:
+            r = fitz.Rect(annot.rect)
+            if not (r.is_empty or r.is_infinite):
+                out.append(r)
+    except Exception:
+        pass
+    return out
+
+
+def _clip_with_annots(page, clip):
+    """Widen the content clip so annotation-only artwork is never cut away.
+
+    Electronic invoice seals live in /Annots, so they never contribute to
+    ``get_drawings`` / ``get_image_info`` / text boxes. Once flattened they must
+    stay inside the clip, otherwise a seal sitting in the white margin is
+    cropped in half.
+    """
+    fitz = _fitz()
+    bounds = fitz.Rect(clip)
+    for r in _annot_rects(page):
+        bounds |= r
+    bounds &= fitz.Rect(page.rect)
+    if bounds.is_empty or bounds.get_area() < clip.get_area():
+        return clip
+    return bounds
+
+
+def _place_pdf_page(page, rect, src, clip=None) -> None:
+    """Place page 0 of ``src`` into ``rect`` without losing its annotations.
+
+    ``Page.show_pdf_page()`` copies the page content stream only, so /Stamp
+    annotations — where Chinese e-invoices keep the red 发票监制章 — would be
+    dropped from the composed PDF. Flatten them into the page content first.
+    """
+    fitz = _fitz()
+    has_annots = False
+    for src_page in src:
+        try:
+            if next(iter(src_page.annots() or []), None) is not None:
+                has_annots = True
+                break
+        except Exception:
+            continue
+
+    if has_annots:
+        if hasattr(src, "bake"):
+            try:
+                src.bake(annots=True, widgets=False)
+                page.show_pdf_page(rect, src, 0, clip=clip)
+                log.info("flattened annots src=%s", getattr(src, "name", ""))
+                return
+            except Exception:
+                log.warning(
+                    "bake annots failed, falling back to raster src=%s",
+                    getattr(src, "name", ""),
+                    exc_info=True,
+                )
+        # Old PyMuPDF without bake(), or a broken appearance stream:
+        # rasterize the page at print resolution instead.
+        pix = src[0].get_pixmap(dpi=300, clip=clip if clip is not None else src[0].rect)
+        if pix.alpha:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        page.insert_image(rect, pixmap=pix, keep_proportion=True)
+        return
+
+    page.show_pdf_page(rect, src, 0, clip=clip)
+
+
 def _fit_size(box_w: float, box_h: float, img_w: float, img_h: float) -> tuple[float, float]:
     if img_w <= 0 or img_h <= 0 or box_w <= 0 or box_h <= 0:
         return max(box_w, 1.0), max(box_h, 1.0)
@@ -218,6 +291,7 @@ def append_entry_page(
     try:
         inv_page = inv_doc[0]
         clip = _invoice_content_clip(inv_page, pad=1.0)
+        clip = _clip_with_annots(inv_page, clip)
         clip_w, clip_h = clip.width, clip.height
 
         inv_w, inv_h = _fit_size(content_w, top_max_h, clip_w, clip_h)
@@ -229,7 +303,7 @@ def append_entry_page(
         inv_x = MARGIN_SIDE + (content_w - inv_w) / 2
         inv_y = content_top
         inv_rect = fitz.Rect(inv_x, inv_y, inv_x + inv_w, inv_y + inv_h)
-        page.show_pdf_page(inv_rect, inv_doc, 0, clip=clip)
+        _place_pdf_page(page, inv_rect, inv_doc, clip)
     finally:
         inv_doc.close()
 
@@ -288,11 +362,11 @@ def append_layout_pages(doc, files_by_slot: dict[str, str], layout: dict | None 
             if kind == "pdf" or path.suffix.lower() == ".pdf":
                 src = fitz.open(path)
                 try:
-                    clip = _invoice_content_clip(src[0], pad=1.0) if sid == inv_id else None
-                    if clip is not None:
-                        page.show_pdf_page(rect, src, 0, clip=clip)
-                    else:
-                        page.show_pdf_page(rect, src, 0)
+                    clip = None
+                    if sid == inv_id:
+                        clip = _invoice_content_clip(src[0], pad=1.0)
+                        clip = _clip_with_annots(src[0], clip)
+                    _place_pdf_page(page, rect, src, clip)
                 finally:
                     src.close()
             else:

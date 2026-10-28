@@ -3,9 +3,10 @@
     <div class="page-head">
       <div>
         <h1>待归类收件箱</h1>
-        <p>尚未挂到条目的材料，可改类型并分配到条目</p>
+        <p>批量上传的材料会先到这里；可改类型、挂到条目，或「批量整理」成批入库</p>
       </div>
       <div class="actions">
+        <button class="btn btn-primary" @click="openTidy">批量整理</button>
         <button class="btn" @click="load">刷新</button>
       </div>
     </div>
@@ -13,7 +14,7 @@
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="msg" class="okmsg">{{ msg }}</p>
     <div v-if="loading" class="meta">加载中…</div>
-    <div v-else-if="!items.length" class="card empty">收件箱为空。</div>
+    <div v-else-if="!items.length" class="card empty">收件箱为空。批量上传的材料会先放在这里。</div>
     <div v-else class="card">
       <table class="table">
         <thead>
@@ -35,7 +36,11 @@
                 :title="m.original_name"
               />
             </td>
-            <td>{{ m.original_name }}</td>
+            <td>
+              {{ m.original_name }}
+              <span v-if="m.staged" class="chip chip-muted">待整理</span>
+              <span v-else-if="m.processing" class="chip chip-muted">识别中</span>
+            </td>
             <td>
               <select :value="m.type" @change="changeType(m, $event.target.value)">
                 <option v-for="s in slotDefs" :key="s.id" :value="s.id">{{ s.label }}</option>
@@ -63,10 +68,12 @@
 import { onMounted, reactive, ref } from 'vue'
 import { api, isImageMaterial, isPdfMaterial } from '../api/client'
 import { useSlots } from '../composables/useSlots'
+import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
 import MaterialPreview from '../components/MaterialPreview.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 
 const { askConfirm } = useConfirmDialog()
+const { openBatchUpload } = useBatchUploadDialog()
 const { slots: slotDefs } = useSlots()
 const items = ref([])
 const entries = ref([])
@@ -74,6 +81,10 @@ const loading = ref(true)
 const error = ref('')
 const msg = ref('')
 const assignMap = reactive({})
+
+function openTidy() {
+  openBatchUpload({ onDone: load })
+}
 
 function previewKind(m) {
   if (isPdfMaterial(m)) return 'pdf'

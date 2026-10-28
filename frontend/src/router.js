@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import EntryList from './views/EntryList.vue'
 import EntryDetail from './views/EntryDetail.vue'
 import Inbox from './views/Inbox.vue'
+import Trash from './views/Trash.vue'
 import Help from './views/Help.vue'
 import Ledger from './views/Ledger.vue'
 import Assets from './views/Assets.vue'
@@ -11,6 +12,7 @@ const routes = [
   { path: '/', name: 'home', component: EntryList },
   { path: '/entries/:id', name: 'entry', component: EntryDetail, props: true },
   { path: '/inbox', name: 'inbox', component: Inbox },
+  { path: '/trash', name: 'trash', component: Trash },
   { path: '/ledger', name: 'ledger', component: Ledger },
   { path: '/assets', name: 'assets', component: Assets },
   { path: '/help', name: 'help', component: Help },

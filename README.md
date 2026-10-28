@@ -74,6 +74,29 @@ D:\Miniconda\envs\star-invoice\npm.cmd run dev
 - 控制台（uvicorn + 业务日志）
 - `data/logs/app.log`（滚动文件，含请求耗时、创建条目、上传、归类、拼版等）
 
+## 文档
+
+- [开发计划与进度](docs/开发计划与进度.md)：工程方向、已完成、待办、已知限制、变更记录
+- [材料上传与识别流程](docs/材料上传与识别流程.md)：上传 / 收件箱 / 聚类 / 判重 / 回收站的实现细节
+
+## 自检
+
+发票上的红色监制章在电子发票 PDF 里是 `/Stamp` 注释，拼版时必须先展平才能保留。改动拼版逻辑后可用脚本核对（只读发票 PDF，对比件写在内存/临时目录）：
+
+```bat
+.venv\Scripts\python scripts\check_invoice_seal.py
+```
+
+默认扫描 `data/uploads` 下的所有发票 PDF，也可传入具体文件。加 `--legacy` 会关闭「注释展平」以模拟修复前行为，此时应当全部失败——用来确认检查脚本本身有效。
+
+批量上传/收件箱流程也可以跑隔离环境自检（数据目录指向系统临时目录，不碰项目 `data/`）：
+
+```bat
+.venv\Scripts\python scripts\check_inbox_staging.py
+```
+
+覆盖：上传直接进收件箱、关窗重开后仍能继续整理、改类型持久化、确认入库、丢弃进回收站并恢复、查重。
+
 ## 生产 / 单端口模式
 
 ```bat
@@ -87,7 +110,8 @@ start.bat
 ```
 backend/app/          FastAPI、SQLite、拼版与归类
 frontend/             Vue 3 + Vite
-data/                 上传、导出、数据库（gitignore）
+docs/                 开发计划与流程文档
+data/                 上传、导出、回收站、数据库（gitignore）
 environment.yml       conda 前端工具链
 requirements.txt      Python 依赖
 ```

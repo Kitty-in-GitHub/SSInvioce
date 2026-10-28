@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+import uuid
+
+from fastapi import APIRouter, HTTPException
 
 from ..db import get_conn, now_iso, row_to_dict
 from ..logging_config import get_logger
@@ -9,7 +11,8 @@ from ..services.amount import apply_auto_amount, extract_invoice_amount
 from ..services.duplicates import find_invoice_duplicate, warning_from_hit
 from ..services.ledger_link import delete_entry_ledger, sync_entry_ledger
 from ..services.serializers import completeness_from_types, material_to_out
-from ..services.storage import delete_stored_files
+from ..services.storage import delete_file
+from ..services.trash import trash_material
 router = APIRouter(prefix="/api/entries", tags=["entries"])
 log = get_logger("entries")
 
@@ -210,17 +213,20 @@ def reparse_amount(entry_id: int, body: ReparseAmountRequest | None = None):
 
 
 @router.delete("/{entry_id}")
-def delete_entry(entry_id: int, background_tasks: BackgroundTasks):
+def delete_entry(entry_id: int):
+    batch_id = uuid.uuid4().hex
     with get_conn() as conn:
         mats = conn.execute(
-            "SELECT stored_path FROM materials WHERE entry_id = ?",
+            "SELECT * FROM materials WHERE entry_id = ? ORDER BY id",
             (entry_id,),
         ).fetchall()
+        for mat in mats:
+            data = dict(mat)
+            if not trash_material(conn, data, reason="entry_deleted", batch_id=batch_id):
+                delete_file(data["stored_path"])
         delete_entry_ledger(conn, entry_id)
         cur = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="entry not found")
-    paths = [m["stored_path"] for m in mats]
-    background_tasks.add_task(delete_stored_files, paths)
-    log.info("deleted entry id=%s materials=%s", entry_id, len(mats))
+    log.info("deleted entry id=%s materials=%s -> trash batch=%s", entry_id, len(mats), batch_id)
     return {"ok": True}

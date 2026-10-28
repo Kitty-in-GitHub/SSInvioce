@@ -88,6 +88,7 @@ const apiInfo = ref(null)
 const navItems = [
   { to: '/', label: '条目', icon: '☰', match: ['/', '/entries'] },
   { to: '/inbox', label: '收件箱', icon: '▢' },
+  { to: '/trash', label: '回收站', icon: '♻' },
   { to: '/ledger', label: '记账', icon: '¥' },
   { to: '/assets', label: '物资', icon: '▣' },
 ]
