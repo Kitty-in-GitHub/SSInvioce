@@ -243,7 +243,7 @@
     </section>
 
     <section v-show="!loading && tab === 'keywords'" class="settings-panel card" role="tabpanel">
-      <p class="meta settings-lead">批量上传时按关键词匹配槽位。正文命中权重高于文件名。</p>
+      <p class="meta settings-lead">上传后整理时按关键词匹配槽位。正文命中权重高于文件名。</p>
       <div v-for="slot in draftSlots" :key="'kw-' + slot.id" class="keyword-block">
         <div class="keyword-block-head">
           <h3>{{ slot.label }}</h3>

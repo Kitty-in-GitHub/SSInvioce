@@ -398,6 +398,38 @@ def main() -> int:
         "收件箱多出 2 个恢复的材料",
     )
 
+    print("\n[17] 快速上传：只入库不识别，整理时才归类")
+    with get_conn() as conn:
+        leftover = [
+            str(r["id"]) for r in conn.execute("SELECT id FROM materials WHERE entry_id IS NULL").fetchall()
+        ]
+    if leftover:
+        classify_router.classify_discard(DiscardRequest(temp_ids=leftover))
+
+    res_fast = asyncio.run(
+        materials_router.upload_materials_fast(
+            files=[
+                upload("快速_发票.pdf", inv_a, "application/pdf"),
+                upload("快速_订单.png", blank, "image/png"),
+            ]
+        )
+    )
+    check(res_fast["count"] == 2, "快速上传 2 个文件", str(res_fast["count"]))
+    rows_fast = db_rows("entry_id IS NULL")
+    check(len(rows_fast) == 2, "收件箱有 2 行", str(len(rows_fast)))
+    check(all(r["type"] == "unknown" for r in rows_fast), "类型保持 unknown（不归类）")
+    check(all(r["analyze_status"] == "raw" for r in rows_fast), "状态为 raw")
+    check(all(r["content_sha256"] for r in rows_fast), "已记录内容哈希")
+    check(all(m.raw for m in materials_router.list_inbox()), "收件箱接口标记 raw")
+
+    p_fast = classify_router.classify_recluster(None)
+    by_name = {i.original_name: i for i in p_fast.items}
+    check(by_name["快速_发票.pdf"].suggested_type == "invoice", "整理时识别出发票")
+    check(by_name["快速_订单.png"].suggested_type == "order", "整理时识别出订单")
+    rows_fast = db_rows("entry_id IS NULL")
+    check(all(r["analyze_status"] == "done" for r in rows_fast), "识别后状态转为 done")
+    check(any(r["type"] == "invoice" for r in rows_fast), "类型已回写")
+
     print(f"\n汇总：通过 {PASSED}，失败 {FAILED}")
     return 1 if FAILED else 0
 

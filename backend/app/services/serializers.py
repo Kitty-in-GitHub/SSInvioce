@@ -42,4 +42,5 @@ def material_to_out(row: dict, *, duplicate_warning: dict[str, Any] | None = Non
         duplicate_warning=warn,
         processing=(row.get("analyze_status") == "pending"),
         staged=(row.get("analyze_status") == "staged"),
+        raw=(row.get("analyze_status") == "raw"),
     )

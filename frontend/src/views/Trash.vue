@@ -77,7 +77,7 @@ function typeLabel(type) {
 
 function reasonLabel(reason) {
   const map = {
-    classify_discard: '批量整理丢弃',
+    classify_discard: '整理丢弃',
     material_deleted: '删除材料',
     entry_deleted: '删除条目',
     replaced: '上传替换',

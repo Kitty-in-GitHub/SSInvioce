@@ -84,7 +84,7 @@ const route = useRoute()
 const apiError = ref('')
 const apiInfo = ref(null)
 
-/** 侧栏导航（批量上传用弹窗，不进侧栏；帮助与设置固定在底部） */
+/** 侧栏导航（整理用弹窗，不进侧栏；帮助与设置固定在底部） */
 const navItems = [
   { to: '/', label: '条目', icon: '☰', match: ['/', '/entries'] },
   { to: '/inbox', label: '收件箱', icon: '▢' },

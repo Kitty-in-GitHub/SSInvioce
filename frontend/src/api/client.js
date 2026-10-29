@@ -81,6 +81,11 @@ export const api = {
     if (type) fd.append('type', type)
     return request('/api/materials/upload', { method: 'POST', body: fd })
   },
+  uploadMaterialsFast: async (files) => {
+    const fd = new FormData()
+    for (const f of files) fd.append('files', f)
+    return request('/api/materials/upload-batch', { method: 'POST', body: fd })
+  },
   listInbox: () => request('/api/materials/inbox'),
   updateMaterial: (id, body) =>
     request(`/api/materials/${id}`, {
@@ -104,11 +109,6 @@ export const api = {
     }),
   purgeAllTrash: () => request('/api/trash', { method: 'DELETE' }),
   listAnalyzeJobs: () => request('/api/materials/jobs'),
-  classifyPreview: async (files) => {
-    const fd = new FormData()
-    for (const f of files) fd.append('files', f)
-    return request('/api/classify/preview', { method: 'POST', body: fd })
-  },
   classifyRecluster: (tempIds) =>
     request('/api/classify/recluster', {
       method: 'POST',

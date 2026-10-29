@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import uuid
 from pathlib import Path
@@ -129,6 +130,55 @@ async def upload_material(
     return payload
 
 
+@router.post("/upload-batch")
+async def upload_materials_fast(files: list[UploadFile] = File(...)):
+    """Fast inbox upload: store files only — no OCR, no classification, no analyze job."""
+    if not files:
+        raise HTTPException(status_code=400, detail="no files")
+    uploaded: list[MaterialOut] = []
+    failed: list[dict] = []
+    ts = now_iso()
+    for file in files:
+        name = file.filename or ""
+        if not name:
+            continue
+        suffix = Path(name).suffix.lower()
+        if suffix not in ALLOWED_EXT:
+            failed.append({"name": name, "error": "不支持的格式"})
+            continue
+        try:
+            content = await file.read()
+            if not content:
+                failed.append({"name": name, "error": "空文件"})
+                continue
+            rel, abs_path = store_upload(content, name, entry_id=None)
+            width = height = None
+            if suffix != ".pdf":
+                width, height = probe_image_size(abs_path)
+            mime = _guess_mime(name, file.content_type)
+            digest = hashlib.sha256(content).hexdigest()
+            with get_conn() as conn:
+                cur = conn.execute(
+                    """
+                    INSERT INTO materials (
+                        entry_id, type, original_name, stored_path, mime, width, height, created_at,
+                        invoice_number, invoice_code, content_sha256, analyze_status, features_json
+                    )
+                    VALUES (NULL, 'unknown', ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'raw', NULL)
+                    """,
+                    (name, rel, mime, width, height, ts, digest),
+                )
+                row = conn.execute(
+                    "SELECT * FROM materials WHERE id = ?", (int(cur.lastrowid),)
+                ).fetchone()
+                uploaded.append(material_to_out(dict(row)))
+        except Exception:
+            log.exception("fast upload failed name=%r", name)
+            failed.append({"name": name, "error": "保存失败"})
+    log.info("fast upload count=%s failed=%s", len(uploaded), len(failed))
+    return {"ok": True, "count": len(uploaded), "uploaded": uploaded, "failed": failed}
+
+
 @router.patch("/{material_id}", response_model=MaterialOut)
 def update_material(material_id: int, body: MaterialAssign):
     patch = body.model_dump(exclude_unset=True)
@@ -189,6 +239,8 @@ def update_material(material_id: int, body: MaterialAssign):
                 material_id,
             ),
         )
+        if new_type != "unknown" and data.get("analyze_status") == "raw":
+            conn.execute("UPDATE materials SET analyze_status = 'done' WHERE id = ?", (material_id,))
         if new_entry is not None:
             conn.execute("UPDATE entries SET updated_at = ? WHERE id = ?", (now_iso(), new_entry))
             apply_auto_amount(
@@ -245,6 +297,8 @@ def update_material_type(material_id: int, body: MaterialTypeUpdate):
                 material_id,
             ),
         )
+        if body.type != "unknown" and data.get("analyze_status") == "raw":
+            conn.execute("UPDATE materials SET analyze_status = 'done' WHERE id = ?", (material_id,))
         if row["entry_id"] is not None:
             conn.execute(
                 "UPDATE entries SET updated_at = ? WHERE id = ?",

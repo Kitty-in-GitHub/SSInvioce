@@ -1,40 +1,82 @@
 <template>
   <div class="batch-upload-panel">
-    <div
-      class="dropzone"
-      :class="{ active: dragging && !analyzing, disabled: analyzing || confirming }"
-      @dragover.prevent="onDragOver"
-      @dragleave.prevent="dragging = false"
-      @drop.prevent="onDrop"
-      @click="onDropzoneClick"
-    >
-      拖拽文件到此处，或点击选择（PDF / JPG / PNG）
-      <p class="meta dropzone-hint">将自动 OCR / 读发票文本，按金额等线索归入拟建条目</p>
-      <input
-        ref="fileInput"
-        type="file"
-        multiple
-        hidden
-        accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.gif"
-        :disabled="analyzing || confirming"
-        @change="onPick"
-      />
-    </div>
-
-    <div v-if="analyzing" class="batch-loading" role="status" aria-live="polite">
-      <span class="batch-loading-spinner" aria-hidden="true" />
-      <div>
-        <strong>正在识别与归组…</strong>
-        <p class="meta batch-loading-hint">请稍候，完成前请勿关闭弹窗</p>
+    <header class="batch-toolbar">
+      <p v-if="error" ref="confirmErrorEl" class="error batch-confirm-error">{{ error }}</p>
+      <div class="batch-toolbar-row">
+        <div class="batch-toolbar-head">
+          <h3 id="batch-upload-title" class="batch-toolbar-title">整理</h3>
+          <p class="batch-toolbar-sub">把收件箱里的材料归成条目</p>
+        </div>
+        <div class="batch-toolbar-stats">
+          <span class="batch-stat">拟建 <b>{{ clusters.length }}</b></span>
+          <span class="batch-stat">未匹配 <b>{{ unmatchedItems.length }}</b></span>
+          <span v-if="duplicateItems.length" class="batch-stat batch-stat-warn">
+            副本 <b>{{ duplicateItems.length }}</b>
+          </span>
+          <button
+            class="link-btn batch-regroup-btn"
+            type="button"
+            :disabled="confirming || analyzing"
+            title="按材料当前类型重新计算归组（会重置未保存的标题/金额/归属）"
+            @click="recluster"
+          >
+            重新归组
+          </button>
+        </div>
+        <div class="batch-upload-action-btns">
+          <button
+            class="btn"
+            type="button"
+            :disabled="confirming || analyzing || !duplicateUploadCount"
+            :title="duplicateUploadCount ? '把所有判定为重复的拟建条目和副本移入回收站' : '没有重复上传'"
+            @click="discardAllDuplicates"
+          >
+            丢弃重复{{ duplicateUploadCount ? `（${duplicateUploadCount}）` : '' }}
+          </button>
+          <button
+            class="btn btn-primary"
+            :disabled="confirming || analyzing || !items.length"
+            @click="confirm"
+          >
+            {{ confirming ? '入库中…' : '确认入库' }}
+          </button>
+          <button
+            class="btn-ghost batch-close-btn"
+            type="button"
+            :disabled="analyzing || confirming"
+            title="关闭（未入库的材料会留在收件箱）"
+            aria-label="关闭"
+            @click="emit('request-close')"
+          >
+            <svg class="batch-close-icon" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
-    </div>
+    </header>
 
-    <p v-if="ocrHint" class="meta">{{ ocrHint }}</p>
-    <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="msg" class="okmsg">{{ msg }}</p>
+    <div class="batch-upload-scroll">
+      <p v-if="ocrHint" class="meta">{{ ocrHint }}</p>
+      <p v-if="msg" class="okmsg">{{ msg }}</p>
+
+      <div v-if="analyzing" class="batch-loading" role="status" aria-live="polite">
+        <span class="batch-loading-spinner" aria-hidden="true" />
+        <div>
+          <strong>正在重新归组…</strong>
+          <p class="meta batch-loading-hint">请稍候</p>
+        </div>
+      </div>
+
+      <div v-if="!analyzing && !items.length" class="card empty batch-empty">
+        收件箱里还没有未归类材料。到「收件箱」点「上传」快速入库，或在条目里上传材料。
+      </div>
 
     <div v-if="clusters.length" class="cluster-list">
-      <h4 class="cluster-section-title">拟建条目（{{ clusters.length }}）</h4>
+      <div class="section-head">
+        <h4 class="cluster-section-title">拟建条目</h4>
+        <span class="section-count">{{ clusters.length }}</span>
+      </div>
       <section v-for="c in clusters" :key="c.cluster_id" class="cluster-card card">
         <header class="cluster-card-head">
           <div class="cluster-title-amount">
@@ -44,6 +86,24 @@
               placeholder="项目名"
               :disabled="!!c.entry_id"
             />
+            <label class="cluster-merge-field">
+              <span class="cluster-merge-label">归属</span>
+              <select
+                class="cluster-merge-select"
+                :value="c.entry_id ? String(c.entry_id) : ''"
+                :title="c.entry_id ? '并入已有条目' : '新建条目，或并入一个未齐套的条目'"
+                @change="onClusterTarget(c, $event)"
+              >
+                <option value="">新建条目</option>
+                <option
+                  v-for="e in entryCandidatesForCluster(c)"
+                  :key="'merge-' + e.id"
+                  :value="String(e.id)"
+                >
+                  并入：{{ e.title }}（缺 {{ entryMissingText(e) }}）
+                </option>
+              </select>
+            </label>
             <div class="amount-edit cluster-amount-edit">
               <span class="amount-prefix">¥</span>
               <input
@@ -78,29 +138,11 @@
             </svg>
           </button>
         </header>
-        <div class="cluster-merge-row">
-          <span class="meta">归属</span>
-          <select
-            class="cluster-merge-select"
-            :value="c.entry_id ? String(c.entry_id) : ''"
-            @change="onClusterTarget(c, $event)"
-          >
-            <option value="">新建条目</option>
-            <option
-              v-for="e in entryCandidatesForCluster(c)"
-              :key="'merge-' + e.id"
-              :value="String(e.id)"
-            >
-              并入：{{ e.title }}（缺 {{ entryMissingText(e) }}）
-            </option>
-          </select>
-          <span v-if="c.entry_id" class="chip chip-muted">并入已有条目</span>
-        </div>
-        <div v-if="c.dupKeepBoth" class="dup-ok">已选择都添加，确认入库时将一并写入</div>
+        <div v-if="c.dupKeepBoth" class="dup-ok">将一并添加</div>
         <div v-else-if="c.duplicate_warning" class="dup-warn">
           <p>{{ formatDupWarn(c.duplicate_warning) }}</p>
           <div class="dup-warn-actions">
-            <button type="button" class="btn btn-sm" @click="openCompare(c)">对比查看</button>
+            <button type="button" class="btn btn-sm" @click="openCompare(c)">对比</button>
           </div>
         </div>
         <div class="cluster-slots">
@@ -153,7 +195,10 @@
     </div>
 
     <div v-if="unmatchedItems.length" class="unmatched-block">
-      <h4 class="cluster-section-title">未匹配（{{ unmatchedItems.length }}）</h4>
+      <div class="section-head">
+        <h4 class="cluster-section-title">未匹配</h4>
+        <span class="section-count">{{ unmatchedItems.length }}</span>
+      </div>
       <div class="unmatched-list">
         <div
           v-for="item in unmatchedItems"
@@ -164,8 +209,8 @@
         >
           <div class="unmatched-preview">
             <MaterialPreview
-              v-if="item.localUrl"
-              :url="item.localUrl"
+              v-if="itemPreviewUrl(item)"
+              :url="itemPreviewUrl(item)"
               :kind="isPdfName(item.original_name) ? 'pdf' : 'image'"
               mode="compact"
               :title="item.original_name"
@@ -189,8 +234,8 @@
               class="unmatched-control"
               @change="onAssignModeChange(item)"
             >
-              <option value="inbox">先放收件箱</option>
-              <option value="existing">挂到已有条目</option>
+              <option value="inbox">放收件箱</option>
+              <option value="existing">挂到条目</option>
               <option value="new">新建条目</option>
               <option v-for="c in clusters" :key="c.cluster_id" :value="`cluster:${c.cluster_id}`">
                 并入：{{ c.title }}
@@ -216,17 +261,20 @@
     </div>
 
     <div v-if="duplicateItems.length" class="duplicate-block">
-      <h4 class="cluster-section-title">重复副本（{{ duplicateItems.length }}）</h4>
+      <div class="section-head">
+        <h4 class="cluster-section-title">重复副本</h4>
+        <span class="section-count section-count-warn">{{ duplicateItems.length }}</span>
+      </div>
       <div class="card duplicate-card">
-        <p class="meta">这些文件与收件箱里另一个文件内容相同，已自动折叠、不参与拟建条目。</p>
+        <p class="meta">与收件箱中另一文件相同，已折叠</p>
         <label class="duplicate-toggle">
           <input v-model="discardDuplicates" type="checkbox" />
-          确认入库时把重复副本移入回收站（可恢复）
+          入库时移入回收站
         </label>
         <ul class="duplicate-list">
           <li v-for="it in duplicateItems" :key="it.temp_id" class="duplicate-item">
             <span class="duplicate-name" :title="it.original_name">{{ it.original_name }}</span>
-            <span class="meta">重复于「{{ duplicateOfName(it) }}」</span>
+            <span class="meta">同「{{ duplicateOfName(it) }}」</span>
             <button
               class="btn btn-sm"
               type="button"
@@ -240,26 +288,6 @@
       </div>
     </div>
 
-    <div v-if="items.length" class="actions batch-upload-actions">
-      <p v-if="error" ref="confirmErrorEl" class="error batch-confirm-error">{{ error }}</p>
-      <div class="batch-upload-action-btns">
-        <button class="btn btn-primary" :disabled="confirming || analyzing" @click="confirm">
-          {{ confirming ? '入库中…' : '确认入库' }}
-        </button>
-        <button class="btn" type="button" :disabled="confirming || analyzing" @click="recluster">重新归组</button>
-        <button
-          class="btn"
-          type="button"
-          :disabled="confirming || analyzing || !duplicateUploadCount"
-          :title="duplicateUploadCount ? '把所有判定为重复的拟建条目和重复副本移入回收站' : '没有重复上传'"
-          @click="discardAllDuplicates"
-        >
-          丢弃所有重复上传{{ duplicateUploadCount ? `（${duplicateUploadCount}）` : '' }}
-        </button>
-      </div>
-      <p class="meta batch-upload-note">
-        未入库的材料会留在「收件箱」，关闭窗口不会删除；随时可以回来继续整理。
-      </p>
     </div>
 
     <Teleport to="body">
@@ -323,12 +351,10 @@ import { useConfirmDialog } from '../composables/useConfirmDialog'
 import InvoiceDupCompare from './InvoiceDupCompare.vue'
 import MaterialPreview from './MaterialPreview.vue'
 
-const emit = defineEmits(['done', 'busy-change'])
+const emit = defineEmits(['done', 'busy-change', 'request-close'])
 const { askConfirm } = useConfirmDialog()
 
-const fileInput = ref(null)
 const confirmErrorEl = ref(null)
-const dragging = ref(false)
 const items = ref([])
 const clusters = ref([])
 const unmatchedIds = ref([])
@@ -389,19 +415,14 @@ function clusterIsKeepBoth(c) {
 
 function formatDupWarn(w) {
   if (!w) return ''
-  const no = w.invoice_number ? `（发票号码 ${w.invoice_number}）` : ''
   const title = w.existing_entry_title || (w.existing_entry_id != null ? `#${w.existing_entry_id}` : '已有材料')
-  if (w.reason === 'same_batch_number') {
-    return `与本批另一文件发票号码相同${no}；请对比后选择保留哪一份`
-  }
-  if (w.reason === 'file_hash') {
-    return `与本批另一文件内容相同（疑似重复文件）${no}；请对比后选择保留哪一份`
-  }
+  if (w.reason === 'same_batch_number') return '同批发票号重复，请选择保留哪份'
+  if (w.reason === 'file_hash') return '同批文件内容重复，请选择保留哪份'
   if (w.reason === 'existing_file_hash') {
     const kind = TYPE_LABELS.value[w.existing_type] || '材料'
-    return `与已有条目「${title}」里的${kind}是同一份文件；请对比后选择保留哪一份或都添加`
+    return `与「${title}」的${kind}是同一文件`
   }
-  return `可能与已有条目「${title}」重复${no}；请对比后选择保留哪一份或都添加`
+  return `与「${title}」的发票号重复`
 }
 
 /** 对比时优先用发票；没有发票的簇（订单+支付）用簇里第一个文件 */
@@ -417,7 +438,6 @@ function representativeItem(cluster) {
 
 function itemPreviewUrl(item) {
   if (!item) return ''
-  if (item.localUrl) return item.localUrl
   if (item.temp_id) return api.stagingFileUrl(item.temp_id)
   return ''
 }
@@ -455,7 +475,7 @@ function openCompare(cluster) {
   const inv = representativeItem(cluster)
   const leftUrl = itemPreviewUrl(inv)
   if (!w || !leftUrl) {
-    error.value = '无法打开对比：缺少本次材料预览'
+    error.value = '无法对比：缺少预览'
     return
   }
   const base = {
@@ -502,7 +522,7 @@ async function discardTempIds(tempIds, okMessage) {
   const tids = [...tempIds]
   if (!tids.length) return
   const res = await api.classifyDiscard(tids)
-  applyPreview(res, [])
+  applyPreview(res)
   if (okMessage) msg.value = okMessage
 }
 
@@ -510,7 +530,7 @@ async function discardItem(item) {
   if (!item) return
   const ok = await askConfirm({
     title: '丢弃文件',
-    message: `将把「${item.original_name}」移入回收站（可恢复）。`,
+    message: `将「${item.original_name}」移入回收站（可恢复）。`,
     confirmText: '丢弃',
     cancelText: '取消',
     danger: true,
@@ -528,7 +548,7 @@ async function discardCluster(cluster) {
   if (!ids.length) return
   const ok = await askConfirm({
     title: '丢弃拟建条目',
-    message: `将把「${cluster.title || '未命名'}」的 ${ids.length} 个文件移入回收站（可恢复，不会删除已入库条目）。`,
+    message: `将「${cluster.title || '未命名'}」的 ${ids.length} 个文件移入回收站（可恢复）。`,
     confirmText: '丢弃',
     cancelText: '取消',
     danger: true,
@@ -553,15 +573,15 @@ async function discardAllDuplicates() {
     parts.push(`${duplicateItems.value.length} 个重复副本`)
   }
   const ok = await askConfirm({
-    title: '丢弃所有重复上传',
-    message: `将把${parts.join('、')}移入回收站（可恢复），不影响已入库条目。`,
+    title: '丢弃重复上传',
+    message: `将${parts.join('、')}移入回收站（可恢复）。`,
     confirmText: '全部丢弃',
     cancelText: '取消',
     danger: true,
   })
   if (!ok) return
   try {
-    await discardTempIds(ids, `已丢弃 ${ids.length} 个重复文件，可在回收站恢复`)
+    await discardTempIds(ids, `已丢弃 ${ids.length} 个重复文件`)
   } catch (e) {
     error.value = e.message
   }
@@ -671,11 +691,9 @@ function duplicateOfName(item) {
   return rep?.original_name || `#${item.duplicate_of}`
 }
 
-const ocrHint = computed(() => {
-  if (ocrAvailable.value === false) return '未检测到 OCR 模型（vendor/ocr），图片将仅靠文件名/尺寸猜测'
-  if (ocrAvailable.value === true) return 'OCR 已启用'
-  return ''
-})
+const ocrHint = computed(() =>
+  ocrAvailable.value === false ? '未检测到 OCR 模型，图片仅按文件名识别' : '',
+)
 
 function clusterHasMaterials(cluster) {
   if ((cluster.temp_ids || []).length) return true
@@ -749,38 +767,21 @@ async function loadEntries() {
   entries.value = await api.listEntries()
 }
 
-function applyPreview(res, fileList) {
+function applyPreview(res) {
   ocrAvailable.value = !!res.ocr_available
-  const byName = new Map()
-  for (const f of fileList || []) {
-    if (!byName.has(f.name)) byName.set(f.name, [])
-    byName.get(f.name).push(f)
-  }
   const prevById = new Map(items.value.map((x) => [x.temp_id, x]))
   const mapped = (res.items || []).map((it) => {
     const prev = prevById.get(it.temp_id)
-    const queue = byName.get(it.original_name) || []
-    const file = queue.shift()
-    let localUrl = prev?.localUrl || null
-    if (!localUrl && file) {
-      localUrl = URL.createObjectURL(file)
-    }
     return {
       ...it,
       type: prev?.type && prev.type !== 'unknown' ? prev.type : it.suggested_type,
       assignMode: prev?.assignMode || 'inbox',
       entry_id: prev?.entry_id ?? null,
       create_entry_title: prev?.create_entry_title || '',
-      localUrl,
       features: it.features || {},
       proposed_cluster_id: it.proposed_cluster_id || null,
     }
   })
-  // Drop staging files no longer in snapshot; revoke orphaned previews
-  const keep = new Set(mapped.map((m) => m.temp_id))
-  for (const prev of items.value) {
-    if (!keep.has(prev.temp_id) && prev.localUrl) URL.revokeObjectURL(prev.localUrl)
-  }
   items.value = mapped
   clusters.value = (res.clusters || []).map((c) => {
     const base = {
@@ -809,58 +810,8 @@ function applyPreview(res, fileList) {
   }
 }
 
-function onDropzoneClick() {
-  if (analyzing.value || confirming.value) return
-  fileInput.value?.click()
-}
-
-function onDragOver() {
-  if (analyzing.value || confirming.value) return
-  dragging.value = true
-}
-
-async function handleFiles(fileList) {
-  const files = [...fileList]
-  if (!files.length || analyzing.value || confirming.value) return
-  error.value = ''
-  msg.value = ''
-  analyzing.value = true
-  const beforeIds = new Set(items.value.map((i) => i.temp_id))
-  try {
-    const res = await api.classifyPreview(files)
-    applyPreview(res, files)
-    // Prefer order of newly staged temp_ids over filename matching (Chinese names etc.)
-    const newcomers = (res.items || []).filter((it) => !beforeIds.has(it.temp_id))
-    newcomers.forEach((it, idx) => {
-      const row = items.value.find((x) => x.temp_id === it.temp_id)
-      const file = files[idx]
-      if (!row || !file) return
-      if (row.localUrl) URL.revokeObjectURL(row.localUrl)
-      row.localUrl = URL.createObjectURL(file)
-    })
-  } catch (e) {
-    error.value = e.message
-  } finally {
-    analyzing.value = false
-  }
-}
-
-function onPick(ev) {
-  handleFiles(ev.target.files || [])
-  ev.target.value = ''
-}
-
-function onDrop(ev) {
-  dragging.value = false
-  if (analyzing.value || confirming.value) return
-  handleFiles(ev.dataTransfer.files || [])
-}
-
 function clear({ force = false } = {}) {
   if (!force && (analyzing.value || confirming.value)) return
-  for (const it of items.value) {
-    if (it.localUrl) URL.revokeObjectURL(it.localUrl)
-  }
   items.value = []
   clusters.value = []
   unmatchedIds.value = []
@@ -889,13 +840,7 @@ async function recluster() {
   analyzing.value = true
   try {
     const res = await api.classifyRecluster(items.value.map((i) => i.temp_id))
-    // keep localUrl/type edits where possible
-    const locals = new Map(items.value.map((i) => [i.temp_id, i]))
-    applyPreview(res, [])
-    for (const it of items.value) {
-      const prev = locals.get(it.temp_id)
-      if (prev?.localUrl) it.localUrl = prev.localUrl
-    }
+    applyPreview(res)
   } catch (e) {
     error.value = e.message
   } finally {
@@ -950,7 +895,7 @@ async function confirm() {
       const it = items.value.find((x) => x.temp_id === tid)
       if (!it) continue
       if (it.type === 'unknown') {
-        failConfirm(`拟建条目「${c.title}」中有未分类文件，请先选择材料类型`, tid)
+        failConfirm(`「${c.title}」有未分类文件，请先选类型`, tid)
         return
       }
       materials.push({ temp_id: tid, type: it.type })
@@ -960,7 +905,7 @@ async function confirm() {
     for (const it of unmatchedItems.value) {
       if (it.assignMode === `cluster:${c.cluster_id}`) {
         if (it.type === 'unknown') {
-          failConfirm(`请为「${it.original_name}」选择类型后再并入拟建条目`, it.temp_id)
+          failConfirm(`请为「${it.original_name}」选择类型`, it.temp_id)
           return
         }
         materials.push({ temp_id: it.temp_id, type: it.type })
@@ -989,11 +934,11 @@ async function confirm() {
     const mode = it.assignMode || 'inbox'
     // 先放收件箱允许未分类；挂到条目 / 新建条目必须指定类型
     if (it.type === 'unknown' && mode !== 'inbox') {
-      failConfirm(`请为「${it.original_name}」选择材料类型（发票 / 订单截图 / 支付记录等）`, it.temp_id)
+      failConfirm(`请为「${it.original_name}」选择类型`, it.temp_id)
       return
     }
     if (mode === 'existing' && !it.entry_id) {
-      failConfirm(`请为「${it.original_name}」选择要挂入的条目`, it.temp_id)
+      failConfirm('请选择要挂入的条目', it.temp_id)
       return
     }
     if (mode === 'new') {
@@ -1001,7 +946,7 @@ async function confirm() {
         it.create_entry_title = titleFromFilename(it.original_name)
       }
       if (!it.create_entry_title?.trim()) {
-        failConfirm(`请为「${it.original_name}」填写新条目名称`, it.temp_id)
+        failConfirm('请填写新条目名称', it.temp_id)
         return
       }
     }
@@ -1030,12 +975,12 @@ async function confirm() {
     if (dropDup) {
       try {
         await api.classifyDiscard(dupIds)
-        dupNote = `，${dupIds.length} 个重复副本已移入回收站`
+        dupNote = `，${dupIds.length} 个副本已移入回收站`
       } catch (err) {
         dupNote = `，但重复副本移入回收站失败：${err.message}`
       }
     }
-    msg.value = `已入库：${created} 个条目${merged ? `，并入 ${merged} 个` : ''}，${loose.length} 个散件${dupNote}`
+    msg.value = `已入库 ${created} 条${merged ? `，并入 ${merged}` : ''}，散件 ${loose.length}${dupNote}`
     clear({ force: true })
     await loadEntries()
     emit('done')
@@ -1048,17 +993,16 @@ async function confirm() {
 
 async function restoreStaging() {
   // 收件箱里的未归类材料就是"暂存"，打开窗口即接着上次继续
+  analyzing.value = true
   try {
     const res = await api.classifyRecluster(null)
     const count = (res?.items || []).length
-    if (count) {
-      applyPreview(res, [])
-      msg.value = `已载入收件箱中 ${count} 个未归类材料，可继续整理`
-    } else {
-      ocrAvailable.value = !!res?.ocr_available
-    }
+    applyPreview(res)
+    if (count) msg.value = `已载入 ${count} 个未归类材料`
   } catch {
-    /* 后端未启动时不打扰，拖文件时会再报错 */
+    /* 后端未启动时静默，空状态会提示 */
+  } finally {
+    analyzing.value = false
   }
 }
 

@@ -3,18 +3,34 @@
     <div class="page-head">
       <div>
         <h1>待归类收件箱</h1>
-        <p>批量上传的材料会先到这里；可改类型、挂到条目，或「批量整理」成批入库</p>
+        <p>「上传」只入库不识别；可改类型、挂条目，或用「整理」识别归类</p>
       </div>
       <div class="actions">
-        <button class="btn btn-primary" @click="openTidy">批量整理</button>
-        <button class="btn" @click="load">刷新</button>
+        <button
+          class="btn btn-primary"
+          type="button"
+          :disabled="uploading || loading"
+          @click="pickFiles"
+        >
+          {{ uploading ? '上传中…' : '上传' }}
+        </button>
+        <button class="btn" type="button" :disabled="uploading" @click="openTidy">整理</button>
+        <button class="btn" type="button" :disabled="uploading" @click="load">刷新</button>
+        <input
+          ref="fileInput"
+          type="file"
+          multiple
+          hidden
+          accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.gif"
+          @change="onFiles"
+        />
       </div>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="msg" class="okmsg">{{ msg }}</p>
     <div v-if="loading" class="meta">加载中…</div>
-    <div v-else-if="!items.length" class="card empty">收件箱为空。批量上传的材料会先放在这里。</div>
+    <div v-else-if="!items.length" class="card empty">收件箱为空。点「上传」快速放入文件。</div>
     <div v-else class="card">
       <table class="table">
         <thead>
@@ -38,8 +54,9 @@
             </td>
             <td>
               {{ m.original_name }}
-              <span v-if="m.staged" class="chip chip-muted">待整理</span>
-              <span v-else-if="m.processing" class="chip chip-muted">识别中</span>
+              <span v-if="m.processing" class="chip chip-muted">识别中</span>
+              <span v-else-if="m.staged" class="chip chip-muted">待整理</span>
+              <span v-else-if="m.raw" class="chip chip-muted">待识别</span>
             </td>
             <td>
               <select :value="m.type" @change="changeType(m, $event.target.value)">
@@ -81,6 +98,38 @@ const loading = ref(true)
 const error = ref('')
 const msg = ref('')
 const assignMap = reactive({})
+const fileInput = ref(null)
+const uploading = ref(false)
+
+function pickFiles() {
+  if (uploading.value) return
+  fileInput.value?.click()
+}
+
+async function onFiles(ev) {
+  const files = [...(ev.target.files || [])]
+  ev.target.value = ''
+  if (!files.length) return
+  uploading.value = true
+  error.value = ''
+  msg.value = ''
+  try {
+    const res = await api.uploadMaterialsFast(files)
+    const count = res?.count ?? 0
+    const failed = res?.failed || []
+    if (failed.length) {
+      const names = failed.slice(0, 3).map((f) => f.name).join('、')
+      msg.value = `已上传 ${count} 个，失败 ${failed.length} 个（${names}${failed.length > 3 ? '…' : ''}）`
+    } else {
+      msg.value = `已上传 ${count} 个文件，可在「整理」中识别归类`
+    }
+    await load()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    uploading.value = false
+  }
+}
 
 function openTidy() {
   openBatchUpload({ onDone: load })

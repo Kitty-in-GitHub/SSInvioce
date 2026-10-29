@@ -54,6 +54,7 @@ class MaterialOut(BaseModel):
     duplicate_warning: Optional[DuplicateWarning] = None
     processing: bool = False
     staged: bool = False
+    raw: bool = False
 
 
 class Completeness(BaseModel):

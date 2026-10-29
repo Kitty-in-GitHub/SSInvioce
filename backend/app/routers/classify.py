@@ -153,9 +153,23 @@ def _feature_for_row(conn, row: dict) -> FileFeatures:
     feat.temp_id = str(row["id"])
     feat.original_name = row.get("original_name") or feat.original_name
     feat.stored_path = row.get("stored_path") or feat.stored_path
-    # A manual type change in the inbox wins over the originally suggested one.
-    if row.get("type"):
-        feat.suggested_type = row["type"]
+    row_type = (row.get("type") or "").strip()
+    if row_type and row_type != "unknown":
+        # A manual / already-known type wins over the suggested one.
+        feat.suggested_type = row_type
+    elif row.get("analyze_status") == "raw":
+        # Fast-uploaded material: classify lazily on the first organize run.
+        if feat.suggested_type != "unknown":
+            conn.execute(
+                "UPDATE materials SET type = ?, analyze_status = 'done' WHERE id = ?",
+                (feat.suggested_type, row["id"]),
+            )
+        else:
+            conn.execute(
+                "UPDATE materials SET analyze_status = 'done' WHERE id = ?", (row["id"],)
+            )
+    else:
+        feat.suggested_type = row_type or "unknown"
     return feat
 
 

@@ -9,10 +9,10 @@
         <button
           class="btn"
           type="button"
-          :title="inboxCount ? `收件箱还有 ${inboxCount} 个未归类材料，可一并整理` : '一次上传多份材料，自动归组'"
-          @click="openUpload"
+          :title="inboxCount ? `收件箱有 ${inboxCount} 个未归类材料，打开整理` : '收件箱为空'"
+          @click="openTidy"
         >
-          批量上传{{ inboxCount ? ` · 待整理 ${inboxCount}` : '' }}
+          整理{{ inboxCount ? `（${inboxCount}）` : '' }}
         </button>
       </div>
     </div>
@@ -731,7 +731,7 @@ async function load({ silent } = {}) {
   }
 }
 
-function openUpload() {
+function openTidy() {
   openBatchUpload({ onDone: load })
 }
 
