@@ -13,7 +13,7 @@ from ..logging_config import get_logger
 from ..models import MaterialType
 from .amount import parse_amount_from_filename, parse_amount_from_pdf_text
 from .classify import classify_file
-from .ocr import ocr_available, ocr_image
+from .ocr import ocr_available, ocr_image, ocr_image_with_lines
 from .settings_store import invoice_slot_id
 from .storage import resolve_stored
 
@@ -358,7 +358,8 @@ def _amount_float(val: Decimal | None) -> float | None:
 def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, str, bool, list[dict]]:
     """Returns (text, source, ocr_used, ocr_lines).
 
-    ocr_lines: per-row dicts from RapidOCR when source=='ocr', empty otherwise.
+    ocr_lines: unified row dicts for BOTH sources — each has text, source,
+    score (None for pdf), box (None for pdf). Frontend renders the same way.
     """
     suffix = abs_path.suffix.lower()
     if suffix == ".pdf":
@@ -374,7 +375,13 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
             finally:
                 doc.close()
             if text:
-                return text, "pdf", False, []
+                # 把 PDF 文本层按换行拆成统一行结构
+                rows = []
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line:
+                        rows.append({"text": line, "source": "pdf", "score": None, "box": None})
+                return text, "pdf", False, rows
         except Exception:
             log.exception("pdf text failed name=%r", original_name)
             return "", "none", False, []
@@ -403,6 +410,8 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
                 finally:
                     doc.close()
                 if text:
+                    for r in lines:
+                        r["source"] = "ocr"
                     return text, "ocr", True, lines
             except Exception:
                 log.exception("pdf ocr failed name=%r", original_name)
@@ -413,6 +422,8 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
         if ocr_available():
             text, lines = ocr_image_with_lines(abs_path)
             text = text.strip()
+            for r in lines:
+                r["source"] = "ocr"
             if text:
                 return text, "ocr", True, lines
             return "", "ocr", True, lines

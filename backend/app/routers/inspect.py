@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..db import get_conn
+from ..services.analyze_jobs import submit_analyze
 from ..services.features import feature_from_json
 
 router = APIRouter(prefix="/api/inspect", tags=["inspect"])
@@ -78,3 +79,23 @@ def get_inspect_material(material_id: int):
         "content_sha256": data["content_sha256"],
         "features": feat.to_public() if feat else None,
     }
+
+
+@router.post("/materials/{material_id}/re-analyze")
+def re_analyze_material(material_id: int):
+    """Force re-run feature extraction on a single material.
+
+    Clears analyze_status to 'pending' so the backend doesn't skip it,
+    then submits the async analyze job. Returns immediately (job runs in
+    background). Poll GET /api/inspect/materials/{id} to see new results.
+    """
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM materials WHERE id = ?", (material_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="material not found")
+        conn.execute(
+            "UPDATE materials SET analyze_status = 'pending' WHERE id = ?",
+            (material_id,),
+        )
+    submit_analyze(material_id)
+    return {"ok": True, "material_id": material_id, "queued": True}

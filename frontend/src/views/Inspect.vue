@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
 import { api, isImageMaterial } from '../api/client'
 import MaterialPreview from '../components/MaterialPreview.vue'
 
@@ -8,6 +8,9 @@ const loading = ref(false)
 const err = ref('')
 const selectedId = ref(null)
 const search = ref('')
+const reAnalyzing = ref(false)
+const reAnalyzeMsg = ref('')
+let pollTimer = null
 
 async function load() {
   loading.value = true
@@ -47,6 +50,57 @@ function fmtSource(s) {
   return '—'
 }
 
+async function triggerReAnalyze() {
+  if (!selected.value) return
+  if (reAnalyzing.value) return
+  reAnalyzing.value = true
+  reAnalyzeMsg.value = '识别中…'
+  try {
+    await api.reAnalyzeMaterial(selected.value.id)
+    // Poll: re-fetch list every 1.2s until analyze_status != 'pending'
+    let attempts = 0
+    const maxAttempts = 30 // ~36s
+    pollTimer = setInterval(async () => {
+      attempts++
+      try {
+        const res = await api.inspectMaterials()
+        items.value = res.items || []
+        const cur = items.value.find((x) => x.id === selected.value.id)
+        if (!cur || cur.analyze_status !== 'pending') {
+          clearInterval(pollTimer)
+          pollTimer = null
+          reAnalyzing.value = false
+          if (cur?.analyze_status === 'done') {
+            reAnalyzeMsg.value = '✅ 完成'
+            setTimeout(() => (reAnalyzeMsg.value = ''), 2500)
+          } else if (cur) {
+            reAnalyzeMsg.value = `状态: ${cur.analyze_status}`
+            setTimeout(() => (reAnalyzeMsg.value = ''), 2500)
+          }
+        } else if (attempts >= maxAttempts) {
+          clearInterval(pollTimer)
+          pollTimer = null
+          reAnalyzing.value = false
+          reAnalyzeMsg.value = '⏱️ 超时，刷新查看结果'
+        }
+      } catch {
+        // swallow transient poll errors
+      }
+    }, 1200)
+  } catch (e) {
+    reAnalyzing.value = false
+    reAnalyzeMsg.value = '❌ 提交失败: ' + (e.message || e)
+  }
+}
+
+onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
+
+function rowSourceTag(s) {
+  if (s === 'pdf') return '📄'
+  if (s === 'ocr') return '🔤'
+  return '·'
+}
+
 function previewKind(it) {
   if (it.original_name && /\.pdf$/i.test(it.original_name)) return 'pdf'
   return 'image'
@@ -63,13 +117,18 @@ function scoreColor(s) {
   return 'var(--err)'
 }
 
-// Highlight which OCR lines contributed to each extracted field.
-// Simple substring match over joined OCR text.
+// Full concatenated text — shows the EXACT input fed to extract_features
+const fullText = computed(() => {
+  if (!ocrLines.value.length) return ''
+  return ocrLines.value.map((l) => l.text).join('\n')
+})
+
+// Highlight which rows contributed to each extracted field.
+// Substring-match the field value against each row text.
 const fieldMap = computed(() => {
   if (!feat.value) return []
-  const joined = ocrLines.value.map((l) => l.text).join('\n')
   const fields = [
-    { key: 'amount', label: '金额', val: feat.value.amount, hint: '来源: amount.py 正则 + 文件名兜底' },
+    { key: 'amount', label: '金额', val: feat.value.amount, hint: 'amount.py 正则 + 文件名兜底' },
     { key: 'merchant', label: '商家', val: feat.value.merchant, hint: '_extract_merchant()' },
     { key: 'product_name', label: '商品/项目', val: feat.value.product_name, hint: '_extract_product_name()' },
     { key: 'date', label: '日期', val: feat.value.date, hint: '_extract_date()' },
@@ -78,7 +137,7 @@ const fieldMap = computed(() => {
     { key: 'invoice_code', label: '发票代码', val: feat.value.invoice_code, hint: '_extract_invoice_code()' },
   ]
   return fields.map((f) => {
-    let hits = []
+    const hits = []
     if (f.val) {
       const needle = String(f.val).replace(/\s+/g, '')
       if (needle) {
@@ -86,19 +145,17 @@ const fieldMap = computed(() => {
           const compact = line.text.replace(/\s+/g, '')
           if (compact.includes(needle)) hits.push(idx)
         })
-        // Fallback: also match in joined text
-        if (hits.length === 0 && joined.replace(/\s+/g, '').includes(needle)) {
-          hits = ['text']
-        }
       }
     }
     return { ...f, hits }
   })
 })
 
-function onRowClick(idx) {
-  // scroll the field list to show which fields hit this row
-  // also mark the row as "active" visually
+// When user clicks a field card → highlight the matching rows
+const highlightRowIdx = ref(null)
+function highlightField(field) {
+  if (!field.hits.length) return
+  highlightRowIdx.value = field.hits[0]
 }
 
 onMounted(load)
@@ -112,7 +169,16 @@ onMounted(load)
          提示：历史材料没有 OCR 原始行（当时没存），重新整理一次后就会有。</p>
       <div class="page-head-actions">
         <input v-model="search" placeholder="🔍 搜索文件名 / 商家 / 发票号 / 订单号" class="inspect-search" />
-        <button @click="load" class="btn">刷新</button>
+        <button @click="load" class="btn">刷新列表</button>
+        <button
+          @click="triggerReAnalyze"
+          :disabled="!selected || reAnalyzing"
+          class="btn btn-primary"
+          :title="selected ? `对「${selected.original_name}」重新识别` : '先选一份材料'"
+        >
+          {{ reAnalyzing ? '识别中…' : '🔄 重新识别' }}
+        </button>
+        <span v-if="reAnalyzeMsg" class="reanalyze-msg">{{ reAnalyzeMsg }}</span>
       </div>
     </header>
 
@@ -148,36 +214,44 @@ onMounted(load)
       <section v-if="selected" class="inspect-detail">
         <!-- Top: field extraction summary -->
         <div class="panel field-panel">
-          <h3>抽取字段 <span class="muted small">（点击字段 → 高亮下方 OCR 行）</span></h3>
+          <h3>抽取字段 <span class="muted small">（点击字段卡 → 高亮来源行；点击行 → 反向定位字段）</span></h3>
           <div class="field-grid">
             <div
               v-for="f in fieldMap"
               :key="f.key"
               class="field-item"
-              :class="{ ok: f.val, miss: !f.val }"
+              :class="{ ok: f.val, miss: !f.val, clickable: f.hits.length }"
+              @click="highlightField(f)"
             >
               <div class="field-label">{{ f.label }}</div>
               <div class="field-value" :title="f.hint">
                 {{ f.val ?? '—' }}
               </div>
               <div class="field-hits small muted">
-                <span v-if="f.hits.length === 0 && f.val">⚠️ 未在 OCR 原文找到命中</span>
-                <span v-else-if="f.hits.length">命中 OCR 行 {{ f.hits.filter(h => Number.isInteger(h)).length }} 处</span>
-                <span v-else>—</span>
+                <template v-if="f.hits.length === 0 && f.val">⚠️ 未在行文本中找到命中（可能来自文件名兜底）</template>
+                <template v-else-if="f.hits.length">命中行 #{{ f.hits.map(i => i + 1).join(', #') }}</template>
+                <template v-else>—</template>
               </div>
             </div>
           </div>
           <div class="field-meta small muted">
-            text_source: {{ textSource }} · ocr_used: {{ feat?.ocr_used }} · stored_path: {{ selected.stored_path }}
+            text_source: {{ textSource }} · ocr_used: {{ feat?.ocr_used }} · stored: {{ selected.stored_path }}
           </div>
         </div>
 
         <div class="inspect-columns">
-          <!-- OCR rows -->
-          <div class="panel ocr-panel">
-            <h3>OCR 原始行 <span class="muted small">共 {{ ocrLines.length }} 行</span></h3>
+          <!-- Unified rows panel (PDF 文本层 / OCR / 混排) -->
+          <div class="panel rows-panel">
+            <h3>
+              原始提取行
+              <span class="muted small">
+                共 {{ ocrLines.length }} 行
+                <template v-if="ocrLines.some(l => l.source === 'pdf')"> · 📄 PDF文本 {{ ocrLines.filter(l => l.source === 'pdf').length }}</template>
+                <template v-if="ocrLines.some(l => l.source === 'ocr')"> · 🔤 OCR {{ ocrLines.filter(l => l.source === 'ocr').length }}</template>
+              </span>
+            </h3>
             <div v-if="ocrLines.length === 0" class="muted small">
-              该材料没有保存 OCR 原始行。PDF 文本层 / 之前旧版识别不会存。<br />
+              该材料没有保存原始行。旧版识别不会存。<br />
               重新在收件箱整理或在详情页「重新识别」后就会有。
             </div>
             <ul v-else class="ocr-rows">
@@ -185,27 +259,40 @@ onMounted(load)
                 v-for="(row, idx) in ocrLines"
                 :key="idx"
                 class="ocr-row"
+                :class="{
+                  'src-pdf': row.source === 'pdf',
+                  'src-ocr': row.source === 'ocr',
+                  highlighted: highlightRowIdx === idx,
+                }"
+                @click="highlightRowIdx = idx"
               >
                 <span class="ocr-idx">{{ String(idx + 1).padStart(2, '0') }}</span>
+                <span class="ocr-src">{{ rowSourceTag(row.source) }}</span>
                 <span class="ocr-text">{{ row.text }}</span>
-                <span class="ocr-score" :style="{ color: scoreColor(row.score) }">
-                  {{ row.score != null ? (row.score * 100).toFixed(1) + '%' : '—' }}
+                <span v-if="row.score != null" class="ocr-score" :style="{ color: scoreColor(row.score) }">
+                  {{ (row.score * 100).toFixed(1) }}%
                 </span>
+                <span v-else class="ocr-score muted">—</span>
               </li>
             </ul>
           </div>
 
-          <!-- Preview -->
-          <div class="panel preview-panel">
-            <h3>原图预览</h3>
-            <MaterialPreview
-              :url="previewUrl(selected)"
-              :kind="previewKind(selected)"
-              mode="fit"
-            />
-            <div class="preview-meta small muted">
-              type: {{ selected.type }} · id: {{ selected.id }}<br />
-              stored: {{ selected.stored_path }}
+          <!-- Right column: fulltext + preview -->
+          <div class="inspect-right">
+            <div class="panel fulltext-panel">
+              <h3>拼接全文 <span class="muted small">（extract_features 的 text 入参，{{ fullText.length }} 字）</span></h3>
+              <pre class="fulltext">{{ fullText || '(无)' }}</pre>
+            </div>
+            <div class="panel preview-panel">
+              <h3>原图预览</h3>
+              <MaterialPreview
+                :url="previewUrl(selected)"
+                :kind="previewKind(selected)"
+                mode="fit"
+              />
+              <div class="preview-meta small muted">
+                type: {{ selected.type }} · id: {{ selected.id }}
+              </div>
             </div>
           </div>
         </div>
@@ -224,12 +311,30 @@ onMounted(load)
 <style scoped>
 .inspect-page {
   padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 .page-head h2 { margin: 0 0 0.25rem; }
 .page-head p { margin: 0.25rem 0 0.75rem; font-size: 0.8rem; color: var(--muted); }
-.page-head-actions { display: flex; gap: 0.5rem; align-items: center; }
+.page-head-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.page-head-actions .btn-primary {
+  background: var(--accent, #4a6fd1);
+  color: #fff;
+  border-color: var(--accent, #4a6fd1);
+}
+.page-head-actions .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.reanalyze-msg {
+  font-size: 0.78rem;
+  padding: 0 0.3rem;
+  color: var(--muted);
+}
 .inspect-search {
   flex: 1;
+  min-width: 12rem;
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -241,8 +346,8 @@ onMounted(load)
   display: grid;
   grid-template-columns: 22rem 1fr;
   gap: 1rem;
-  height: calc(100vh - 10rem);
-  min-height: 400px;
+  min-height: 60vh;
+  max-height: calc(100vh - 10rem);
 }
 
 /* List */
@@ -287,6 +392,7 @@ onMounted(load)
   flex-direction: column;
   gap: 0.75rem;
   overflow-y: auto;
+  min-width: 0;
 }
 .panel {
   background: var(--bg-card);
@@ -317,42 +423,77 @@ onMounted(load)
 .field-meta { margin-top: 0.5rem; border-top: 1px dashed var(--border); padding-top: 0.4rem; }
 
 .inspect-columns {
-  flex: 1 1 auto;
   display: grid;
   grid-template-columns: 1.5fr 1fr;
   gap: 0.75rem;
-  min-height: 0;
 }
 
-.ocr-panel { overflow: hidden; display: flex; flex-direction: column; }
-.ocr-rows { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1; }
+.rows-panel { overflow: hidden; display: flex; flex-direction: column; }
+.ocr-rows {
+  list-style: none; padding: 0; margin: 0;
+  max-height: 360px; overflow-y: auto;
+}
 .ocr-row {
   display: grid;
-  grid-template-columns: 2.2rem 1fr 4.5rem;
-  gap: 0.5rem;
+  grid-template-columns: 2rem 1.6rem 1fr 4.5rem;
+  gap: 0.4rem;
   padding: 0.25rem 0.4rem;
   border-bottom: 1px solid var(--border);
   font-family: ui-monospace, Consolas, monospace;
   font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.1s;
+  align-items: baseline;
 }
 .ocr-row:hover { background: var(--bg-hover, #f0f1f4); }
+.ocr-row.highlighted { background: #fff4c2; border-left: 3px solid #f5a623; padding-left: 0.25rem; }
+.ocr-row.src-pdf { background: #fbf7f0; }
+.ocr-row.src-pdf.highlighted { background: #fff4c2; }
+.ocr-row.src-ocr .ocr-src { color: #2d7a46; }
+.ocr-row.src-pdf .ocr-src { color: #8a6a1f; }
 .ocr-idx { color: var(--muted); text-align: right; user-select: none; }
-.ocr-text { word-break: break-all; }
+.ocr-src { text-align: center; font-size: 0.85rem; }
+.ocr-text { word-break: break-all; min-width: 0; }
 .ocr-score { text-align: right; font-size: 0.75rem; }
 
-.preview-panel { display: flex; flex-direction: column; overflow: hidden; }
+.inspect-right {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fulltext-panel { display: flex; flex-direction: column; }
+.fulltext {
+  background: var(--bg-muted, #f7f8fb);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.8rem;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.preview-panel { display: flex; flex-direction: column; }
 .preview-panel :deep(.material-preview-root) {
-  flex: 1 1 auto;
-  min-height: 260px;
+  min-height: 240px;
+  max-height: 420px;
   overflow: auto;
 }
 .preview-meta { margin-top: 0.4rem; border-top: 1px dashed var(--border); padding-top: 0.4rem; }
 
-.empty-center { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; gap: 0.5rem; }
+.empty-center { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 300px; gap: 0.5rem; }
 .empty-center .big { font-size: 1.1rem; }
 
+.field-item.clickable { cursor: pointer; transition: transform 0.1s, box-shadow 0.15s; }
+.field-item.clickable:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+
 @media (max-width: 960px) {
-  .inspect-body { grid-template-columns: 1fr; height: auto; }
+  .inspect-body { grid-template-columns: 1fr; }
   .inspect-columns { grid-template-columns: 1fr; }
 }
 </style>

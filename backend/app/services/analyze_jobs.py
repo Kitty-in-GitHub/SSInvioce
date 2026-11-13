@@ -117,19 +117,23 @@ def _run(material_id: int) -> None:
         inv_no = normalize_invoice_digits(feat.invoice_number) if mat_type == inv_id else None
         inv_code = normalize_invoice_digits(feat.invoice_code) if mat_type == inv_id else None
         digest = feat.content_sha256
+        feat.original_name = data["original_name"]
+        feat.stored_path = data["stored_path"]
         entry_id = data.get("entry_id")
         with get_conn() as conn:
             still = conn.execute("SELECT id FROM materials WHERE id = ?", (material_id,)).fetchone()
             if not still:
                 log.info("analyze skipped deleted material id=%s", material_id)
                 return
+            from ..services.features import feature_to_json
             conn.execute(
                 """
                 UPDATE materials
-                SET invoice_number = ?, invoice_code = ?, content_sha256 = ?, analyze_status = 'done'
+                SET invoice_number = ?, invoice_code = ?, content_sha256 = ?,
+                    features_json = ?, analyze_status = 'done'
                 WHERE id = ?
                 """,
-                (inv_no, inv_code, digest, material_id),
+                (inv_no, inv_code, digest, feature_to_json(feat), material_id),
             )
             if entry_id is not None:
                 conn.execute(

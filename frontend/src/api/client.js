@@ -369,6 +369,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+
+  // ── Inspect (debug) ────────────────────────────────────────────────────
+  inspectMaterials: () => request('/api/inspect/materials'),
+  inspectMaterial: (id) => request(`/api/inspect/materials/${id}`),
+  reAnalyzeMaterial: (id) => request(`/api/inspect/materials/${id}/re-analyze`, { method: 'POST' }),
 }
 
 export function formatAmount(val) {
@@ -377,10 +382,6 @@ export function formatAmount(val) {
   if (Number.isNaN(n)) return '—'
   return `¥${n.toFixed(2)}`
 }
-
-// ── Inspect (debug) ────────────────────────────────────────────────────────
-inspectMaterials: () => request('/api/inspect/materials'),
-inspectMaterial: (id) => request(`/api/inspect/materials/${id}`),
 
 export const TYPE_LABELS = {
   invoice: '发票',
