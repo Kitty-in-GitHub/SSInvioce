@@ -44,21 +44,33 @@ def ocr_available() -> bool:
 
 
 def ocr_image(path: Path | str) -> str:
-    """Return concatenated OCR text, or empty string if unavailable/failed."""
+    """Return concatenated OCR text, or empty string if unavailable/failed.
+
+    Use ocr_image_with_lines() if you need the per-row box/score/text structure.
+    """
+    text, _lines = ocr_image_with_lines(path)
+    return text
+
+
+def ocr_image_with_lines(path: Path | str) -> tuple[str, list[dict]]:
+    """Return (concatenated_text, list of per-row dicts).
+
+    Each row dict: {text: str, score: float|None, box: [[x,y], [x,y], [x,y], [x,y]]|None}.
+    Returns ("", []) when OCR is unavailable or fails.
+    """
     engine = _engine()
     if engine is None:
-        return ""
+        return "", []
     try:
         result, _ = engine(str(path))
     except Exception:
         log.exception("OCR failed path=%s", path)
-        return ""
+        return "", []
     if not result:
         log.info("OCR empty path=%s", path)
-        return ""
-    # result rows: [box, text, score]
+        return "", []
     parts: list[str] = []
-    detail_rows = []
+    detail_rows: list[dict] = []
     for row in result:
         if not row or len(row) < 2:
             continue
@@ -67,8 +79,16 @@ def ocr_image(path: Path | str) -> str:
         score = row[2] if len(row) >= 3 else None
         if text:
             parts.append(text)
-            detail_rows.append({"text": text, "score": score, "box": box})
-    log.info("OCR path=%s rows=%d text=%s", path, len(parts), "\n".join(parts)[:2000])
+            # Flatten box for JSON (RapidOCR returns nested list of 4 points)
+            flat_box = None
+            if box:
+                try:
+                    flat_box = [[float(p[0]), float(p[1])] for p in box]
+                except Exception:
+                    flat_box = None
+            detail_rows.append({"text": text, "score": score, "box": flat_box})
+    joined = "\n".join(parts)
+    log.info("OCR path=%s rows=%d text=%s", path, len(parts), joined[:2000])
     if detail_rows:
         log.debug("OCR detail path=%s detail=%s", path, detail_rows)
-    return "\n".join(parts)
+    return joined, detail_rows

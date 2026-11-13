@@ -7,6 +7,7 @@ import Help from './views/Help.vue'
 import Ledger from './views/Ledger.vue'
 import Assets from './views/Assets.vue'
 import Settings from './views/Settings.vue'
+import Inspect from './views/Inspect.vue'
 
 const routes = [
   { path: '/', name: 'home', component: EntryList },
@@ -17,6 +18,7 @@ const routes = [
   { path: '/assets', name: 'assets', component: Assets },
   { path: '/help', name: 'help', component: Help },
   { path: '/settings', name: 'settings', component: Settings },
+  { path: '/inspect', name: 'inspect', component: Inspect },
   { path: '/upload', redirect: '/' },
 ]
 

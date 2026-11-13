@@ -378,6 +378,10 @@ export function formatAmount(val) {
   return `¥${n.toFixed(2)}`
 }
 
+// ── Inspect (debug) ────────────────────────────────────────────────────────
+inspectMaterials: () => request('/api/inspect/materials'),
+inspectMaterial: (id) => request(`/api/inspect/materials/${id}`),
+
 export const TYPE_LABELS = {
   invoice: '发票',
   order: '订单截图',

@@ -95,6 +95,7 @@ class FileFeatures:
     text_preview: str = ""
     ocr_used: bool = False
     text_source: str = "none"  # pdf | ocr | filename | none
+    ocr_lines: list[dict] = None  # type: ignore[assignment]  # populated when source=="ocr"
 
     def to_public(self) -> dict:
         return {
@@ -109,6 +110,7 @@ class FileFeatures:
             "text_preview": self.text_preview[:240],
             "ocr_used": self.ocr_used,
             "text_source": self.text_source,
+            "ocr_lines": self.ocr_lines or [],
         }
 
 
@@ -143,6 +145,7 @@ def feature_from_json(raw: str | None) -> FileFeatures | None:
         text_preview=str(data.get("text_preview") or ""),
         ocr_used=bool(data.get("ocr_used")),
         text_source=str(data.get("text_source") or "none"),
+        ocr_lines=data.get("ocr_lines") if isinstance(data.get("ocr_lines"), list) else None,
     )
 
 
@@ -352,8 +355,11 @@ def _amount_float(val: Decimal | None) -> float | None:
     return float(val) if val is not None else None
 
 
-def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, str, bool]:
-    """Returns (text, source, ocr_used)."""
+def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, str, bool, list[dict]]:
+    """Returns (text, source, ocr_used, ocr_lines).
+
+    ocr_lines: per-row dicts from RapidOCR when source=='ocr', empty otherwise.
+    """
     suffix = abs_path.suffix.lower()
     if suffix == ".pdf":
         try:
@@ -368,10 +374,10 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
             finally:
                 doc.close()
             if text:
-                return text, "pdf", False
+                return text, "pdf", False, []
         except Exception:
             log.exception("pdf text failed name=%r", original_name)
-            return "", "none", False
+            return "", "none", False, []
 
         # 扫描版 PDF 没有文本层 → 渲染页面做 OCR
         if ocr_available():
@@ -387,7 +393,8 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
                         tmp_png = f.name
                     try:
                         pix.save(tmp_png)
-                        text = ocr_image(tmp_png).strip()
+                        text, lines = ocr_image_with_lines(tmp_png)
+                        text = text.strip()
                     finally:
                         try:
                             os.unlink(tmp_png)
@@ -396,20 +403,21 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
                 finally:
                     doc.close()
                 if text:
-                    return text, "ocr", True
+                    return text, "ocr", True, lines
             except Exception:
                 log.exception("pdf ocr failed name=%r", original_name)
 
-        return "", "none", False
+        return "", "none", False, []
 
     if suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}:
         if ocr_available():
-            text = ocr_image(abs_path).strip()
+            text, lines = ocr_image_with_lines(abs_path)
+            text = text.strip()
             if text:
-                return text, "ocr", True
-            return "", "ocr", True
-        return "", "none", False
-    return "", "none", False
+                return text, "ocr", True, lines
+            return "", "ocr", True, lines
+        return "", "none", False, []
+    return "", "none", False, []
 
 
 def extract_features(
@@ -422,7 +430,7 @@ def extract_features(
     height: int | None = None,
 ) -> FileFeatures:
     path = abs_path or resolve_stored(stored_path)
-    text, source, ocr_used = extract_text_for_file(abs_path=path, original_name=original_name)
+    text, source, ocr_used, ocr_lines = extract_text_for_file(abs_path=path, original_name=original_name)
     from_text = _amount_float(parse_amount_from_pdf_text(text)) if text else None
     from_name = _amount_float(parse_amount_from_filename(original_name))
     # Prefer explicit filename money token when present (e.g. 260509_12.00_xxx.pdf)
@@ -451,6 +459,7 @@ def extract_features(
         text_preview=(text or "")[:400],
         ocr_used=ocr_used,
         text_source=source,
+        ocr_lines=ocr_lines,
     )
     log.info(
         "features name=%r type=%s amount=%s product=%s merchant=%s date=%s inv=%s source=%s ocr=%s",

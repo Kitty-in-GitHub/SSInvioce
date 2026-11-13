@@ -43,6 +43,16 @@
           <span class="sidebar-link-icon" aria-hidden="true">{{ settingsNav.icon }}</span>
           <span>{{ settingsNav.label }}</span>
         </router-link>
+        <router-link
+          to="/inspect"
+          class="sidebar-link"
+          active-class=""
+          exact-active-class=""
+          :class="{ active: isNavActive(inspectNav) }"
+        >
+          <span class="sidebar-link-icon" aria-hidden="true">{{ inspectNav.icon }}</span>
+          <span>{{ inspectNav.label }}</span>
+        </router-link>
       </nav>
 
       <div class="sidebar-footer">
@@ -94,6 +104,7 @@ const navItems = [
 ]
 const helpNav = { to: '/help', label: '使用帮助', icon: '?' }
 const settingsNav = { to: '/settings', label: '设置', icon: '⚙' }
+const inspectNav = { to: '/inspect', label: '识别检查', icon: '✎' }
 
 function isNavActive(item) {
   const path = route.path
