@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -345,6 +347,35 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
                 return text, "pdf", False
         except Exception:
             log.exception("pdf text failed name=%r", original_name)
+            return "", "none", False
+
+        # 扫描版 PDF 没有文本层 → 渲染页面做 OCR
+        if ocr_available():
+            try:
+                import pymupdf as fitz
+
+                doc = fitz.open(abs_path)
+                try:
+                    pix = doc[0].get_pixmap(dpi=300)
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".png", delete=False
+                    ) as f:
+                        tmp_png = f.name
+                    try:
+                        pix.save(tmp_png)
+                        text = ocr_image(tmp_png).strip()
+                    finally:
+                        try:
+                            os.unlink(tmp_png)
+                        except OSError:
+                            pass
+                finally:
+                    doc.close()
+                if text:
+                    return text, "ocr", True
+            except Exception:
+                log.exception("pdf ocr failed name=%r", original_name)
+
         return "", "none", False
 
     if suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}:
