@@ -237,9 +237,12 @@
                         <button
                           type="button"
                           class="slot-mark"
-                          :class="hasSlot(e, slot.id) ? 'slot-mark-ok' : 'slot-mark-miss'"
-                          :title="hasSlot(e, slot.id) ? `预览${slot.label}` : `上传${slot.label}`"
-                          :aria-label="hasSlot(e, slot.id) ? `预览${slot.label}` : `上传${slot.label}`"
+                          :class="[
+                            hasSlot(e, slot.id) ? 'slot-mark-ok' : 'slot-mark-miss',
+                            isPasteSlot(e, slot.id) ? 'slot-mark-armed' : '',
+                          ]"
+                          :title="slotTitle(e, slot)"
+                          :aria-label="slotTitle(e, slot)"
                           :disabled="uploadingKey === uploadKey(e.id, slot.id)"
                           @click="onSlotClick(e, slot)"
                         >
@@ -443,6 +446,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, formatAmount, isImageMaterial, isPdfMaterial } from '../api/client'
 import { acceptForKind, useSlots } from '../composables/useSlots'
+import { clipboardFiles, hasOpenModal, isEditableTarget, normalizePastedFile } from '../composables/useClipboardPaste'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
 import { kickAnalyzePolling } from '../composables/useAnalyzeJobs'
@@ -486,19 +490,21 @@ function uploadKey(entryId, slotId) {
 
 const preview = ref(null)
 const pendingUpload = ref(null)
+const pasteSlot = ref(null)
 const uploadingKey = ref('')
 const slotFileInputEl = ref(null)
 
-function onSlotClick(entry, slot) {
-  const material = slotMaterial(entry, slot.id)
-  if (material) {
-    preview.value = {
-      url: material.url || api.materialFileUrl(material.id),
-      kind: previewKind(material),
-      title: `${entry.title} · ${slot.label}${material.original_name ? ` · ${material.original_name}` : ''}`,
-    }
-    return
-  }
+function isPasteSlot(entry, slotId) {
+  return !!pasteSlot.value && pasteSlot.value.entryId === entry.id && pasteSlot.value.type === slotId
+}
+
+function slotTitle(entry, slot) {
+  if (hasSlot(entry, slot.id)) return `预览${slot.label}`
+  if (isPasteSlot(entry, slot.id)) return `Ctrl+V 粘贴${slot.label}，或再点一次选择文件`
+  return `点击选中${slot.label}，然后 Ctrl+V 粘贴或再点一次选择文件`
+}
+
+function openSlotPicker(entry, slot) {
   pendingUpload.value = {
     entryId: entry.id,
     entryTitle: entry.title,
@@ -515,12 +521,46 @@ function onSlotClick(entry, slot) {
   })
 }
 
-async function onSlotFilePicked(ev) {
-  const file = ev.target.files?.[0]
-  ev.target.value = ''
-  const target = pendingUpload.value
-  pendingUpload.value = null
-  if (!file || !target) return
+function onSlotClick(entry, slot) {
+  const material = slotMaterial(entry, slot.id)
+  if (material) {
+    pasteSlot.value = null
+    hint.value = ''
+    preview.value = {
+      url: material.url || api.materialFileUrl(material.id),
+      kind: previewKind(material),
+      title: `${entry.title} · ${slot.label}${material.original_name ? ` · ${material.original_name}` : ''}`,
+    }
+    return
+  }
+  if (isPasteSlot(entry, slot.id)) {
+    pasteSlot.value = null
+    hint.value = ''
+    openSlotPicker(entry, slot)
+    return
+  }
+  pasteSlot.value = {
+    entryId: entry.id,
+    entryTitle: entry.title,
+    type: slot.id,
+    label: slot.label,
+    accept: slot.accept,
+  }
+  hint.value = `已选中「${entry.title}」的「${slot.label}」：Ctrl+V 粘贴，或再点一次选择文件`
+}
+
+function onPaste(ev) {
+  const target = pasteSlot.value
+  if (!target || isEditableTarget(ev.target) || hasOpenModal()) return
+  const files = clipboardFiles(ev)
+  if (!files.length) return
+  ev.preventDefault()
+  uploadSlotFile(target, normalizePastedFile(files[0], 0))
+}
+
+async function uploadSlotFile(target, file) {
+  if (!target || !file) return
+  pasteSlot.value = null
   const key = uploadKey(target.entryId, target.type)
   uploadingKey.value = key
   error.value = ''
@@ -538,6 +578,15 @@ async function onSlotFilePicked(ev) {
   } finally {
     uploadingKey.value = ''
   }
+}
+
+async function onSlotFilePicked(ev) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  const target = pendingUpload.value
+  pendingUpload.value = null
+  if (!file || !target) return
+  uploadSlotFile(target, file)
 }
 
 const { openBatchUpload } = useBatchUploadDialog()
@@ -1445,10 +1494,12 @@ async function composeGroup(g) {
 
 onMounted(() => {
   load()
+  window.addEventListener('paste', onPaste)
   window.addEventListener('keydown', onMoveDialogKeydown)
   document.addEventListener('pointerdown', onBoardPointerDown, true)
 })
 onUnmounted(() => {
+  window.removeEventListener('paste', onPaste)
   window.removeEventListener('keydown', onMoveDialogKeydown)
   document.removeEventListener('pointerdown', onBoardPointerDown, true)
   endBoardGesture()

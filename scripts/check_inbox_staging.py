@@ -430,6 +430,53 @@ def main() -> int:
     check(all(r["analyze_status"] == "done" for r in rows_fast), "识别后状态转为 done")
     check(any(r["type"] == "invoice" for r in rows_fast), "类型已回写")
 
+    print("\n[18] 扫码接收：页面与上传")
+    from datetime import datetime, timedelta, timezone
+    from backend.app.services.mobile_receiver import build_app
+
+    token = "a" * 32
+    mobile_session = {
+        "token": token,
+        "port": 0,
+        "url": f"http://127.0.0.1:0/m/{token}",
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        "received": [],
+        "uploads": 0,
+    }
+    mobile_app = build_app(mobile_session)
+    mobile_routes = {r.path: r for r in mobile_app.routes}
+    page = mobile_routes["/m/{token}"].endpoint(token)
+    page_body = page.body.decode("utf-8")
+    check("传到电脑" in page_body and token in page_body, "扫码页可访问且带令牌")
+
+    payload = asyncio.run(
+        mobile_routes["/m/{token}/upload"].endpoint(
+            token, files=[upload("手机截图.png", blank, "image/png")]
+        )
+    )
+    check(payload["count"] == 1, "手机上传 1 个", str(payload))
+    check(len(mobile_session["received"]) == 1, "会话已计数")
+    picked = [r for r in db_rows("entry_id IS NULL") if r["original_name"] == "手机截图.png"]
+    check(bool(picked) and picked[0]["analyze_status"] == "raw", "手机上传仍是 raw")
+
+    try:
+        mobile_routes["/m/{token}"].endpoint("bad-token")
+        check(False, "错误令牌被拒绝")
+    except HTTPException as exc:
+        check(exc.status_code == 404, "错误令牌 404")
+
+    expired_session = dict(
+        mobile_session,
+        token="b" * 32,
+        expires_at="2000-01-01T00:00:00+00:00",
+    )
+    expired_route = {r.path: r for r in build_app(expired_session).routes}["/m/{token}"]
+    try:
+        expired_route.endpoint("b" * 32)
+        check(False, "过期令牌被拒绝")
+    except HTTPException as exc:
+        check(exc.status_code == 410, "过期令牌 410")
+
     print(f"\n汇总：通过 {PASSED}，失败 {FAILED}")
     return 1 if FAILED else 0
 

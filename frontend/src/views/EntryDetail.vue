@@ -107,13 +107,15 @@
           v-for="slot in slots"
           :key="slot.type"
           class="slot"
-          :class="{ 'slot-missing': slot.missing }"
+          :class="{ 'slot-missing': slot.missing, 'slot-paste-armed': pasteSlot === slot.type }"
+          @click="armSlot(slot)"
         >
           <h4>
             {{ slot.label }}
             <span v-if="slot.material?.processing" class="chip chip-muted">识别中</span>
             <span v-else-if="slot.missing" class="slot-missing-tag">缺失</span>
           </h4>
+          <div v-if="pasteSlot === slot.type" class="slot-paste-hint">Ctrl+V 粘贴到此处</div>
           <div class="preview">
             <MaterialPreview
               v-if="slot.preview"
@@ -128,7 +130,7 @@
             </div>
           </div>
           <div class="meta" v-if="slot.preview">{{ slot.preview.original_name }}</div>
-          <div class="actions">
+          <div class="actions" @click.stop>
             <label class="btn btn-sm">
               {{ slotBusy(slot.type) ? '处理中…' : slot.material ? '替换' : '上传' }}
               <input
@@ -173,6 +175,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, isImageMaterial, isPdfMaterial } from '../api/client'
 import { acceptForKind, missingLabelFromSlots, useSlots } from '../composables/useSlots'
+import { clipboardFiles, hasOpenModal, isEditableTarget, normalizePastedFile } from '../composables/useClipboardPaste'
 import InvoiceDupCompare from '../components/InvoiceDupCompare.vue'
 import MaterialPreview from '../components/MaterialPreview.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
@@ -199,6 +202,7 @@ const compare = ref(null)
 const uploadingType = ref('')
 const deletingType = ref('')
 const localPreview = ref(null)
+const pasteSlot = ref('')
 const { slots: slotDefs, slotLabels, invoiceId, requiredIds } = useSlots()
 
 function missingLabel(missing) {
@@ -383,10 +387,33 @@ async function deleteDupEntry() {
   }
 }
 
-async function onUpload(ev, type) {
+function armSlot(slot) {
+  if (!slot?.missing || slotBusy(slot.type)) return
+  pasteSlot.value = pasteSlot.value === slot.type ? '' : slot.type
+  if (pasteSlot.value) {
+    error.value = ''
+    msg.value = `已选中「${slot.label}」，按 Ctrl+V 粘贴`
+  }
+}
+
+function onPaste(ev) {
+  if (!pasteSlot.value || isEditableTarget(ev.target) || hasOpenModal()) return
+  const files = clipboardFiles(ev)
+  if (!files.length) return
+  ev.preventDefault()
+  const file = normalizePastedFile(files[0])
+  uploadSlotFile(pasteSlot.value, file)
+}
+
+function onUpload(ev, type) {
   const file = ev.target.files?.[0]
   ev.target.value = ''
+  uploadSlotFile(type, file)
+}
+
+async function uploadSlotFile(type, file) {
   if (!file || slotBusy(type)) return
+  pasteSlot.value = ''
   error.value = ''
   dupWarn.value = null
   msg.value = ''
@@ -518,7 +545,19 @@ watch(
   { immediate: true },
 )
 
-watch(() => route.params.id, () => load())
-onMounted(load)
-onUnmounted(stopProcessingTimer)
+watch(
+  () => route.params.id,
+  () => {
+    pasteSlot.value = ''
+    load()
+  },
+)
+onMounted(() => {
+  window.addEventListener('paste', onPaste)
+  load()
+})
+onUnmounted(() => {
+  window.removeEventListener('paste', onPaste)
+  stopProcessingTimer()
+})
 </script>

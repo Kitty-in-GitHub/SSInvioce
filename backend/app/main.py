@@ -11,7 +11,7 @@ from .config import FRONTEND_DIST, ensure_dirs
 from .db import init_db
 from .logging_config import get_logger, setup_logging
 from .middleware import RequestLogMiddleware
-from .routers import assets, backup, classify, compose, entries, group_compose, group_forms, groups, ledger, materials, settings, trash
+from .routers import assets, backup, classify, compose, entries, group_compose, group_forms, groups, ledger, materials, mobile, settings, trash
 
 SERVICE_NAME = "star-invoice-helper"
 SERVICE_VERSION = "0.1.0"
@@ -41,6 +41,9 @@ async def lifespan(_app: FastAPI):
         trash_removed,
     )
     yield
+    from .services.mobile_receiver import receiver as mobile_receiver
+
+    mobile_receiver.stop()
     shutdown_analyze_jobs()
     get_logger("startup").info("service shutting down")
 
@@ -68,6 +71,7 @@ app.include_router(assets.router)
 app.include_router(backup.router)
 app.include_router(settings.router)
 app.include_router(trash.router)
+app.include_router(mobile.router)
 
 
 @app.get("/api/health")

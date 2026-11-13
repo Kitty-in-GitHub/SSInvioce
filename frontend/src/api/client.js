@@ -108,6 +108,9 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
   purgeAllTrash: () => request('/api/trash', { method: 'DELETE' }),
+  startMobileSession: () => request('/api/mobile/session', { method: 'POST' }),
+  mobileSession: () => request('/api/mobile/session'),
+  stopMobileSession: () => request('/api/mobile/session', { method: 'DELETE' }),
   listAnalyzeJobs: () => request('/api/materials/jobs'),
   classifyRecluster: (tempIds) =>
     request('/api/classify/recluster', {

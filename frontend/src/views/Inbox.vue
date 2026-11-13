@@ -3,16 +3,20 @@
     <div class="page-head">
       <div>
         <h1>待归类收件箱</h1>
-        <p>「上传」只入库不识别；可改类型、挂条目，或用「整理」识别归类</p>
+        <p>支持 Ctrl+V 粘贴截图；「上传」只入库不识别，之后用「整理」归类</p>
       </div>
       <div class="actions">
         <button
           class="btn btn-primary"
           type="button"
           :disabled="uploading || loading"
+          title="上传文件，也可直接 Ctrl+V 粘贴截图"
           @click="pickFiles"
         >
           {{ uploading ? '上传中…' : '上传' }}
+        </button>
+        <button class="btn" type="button" :disabled="uploading" @click="showMobile = true">
+          扫码传文件
         </button>
         <button class="btn" type="button" :disabled="uploading" @click="openTidy">整理</button>
         <button class="btn" type="button" :disabled="uploading" @click="load">刷新</button>
@@ -78,15 +82,23 @@
         </tbody>
       </table>
     </div>
+
+    <MobileTransferDialog
+      :open="showMobile"
+      @close="showMobile = false"
+      @received="onMobileReceived"
+    />
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, isImageMaterial, isPdfMaterial } from '../api/client'
+import { clipboardFiles, hasOpenModal, isEditableTarget, normalizePastedFile } from '../composables/useClipboardPaste'
 import { useSlots } from '../composables/useSlots'
 import { useBatchUploadDialog } from '../composables/useBatchUploadDialog'
 import MaterialPreview from '../components/MaterialPreview.vue'
+import MobileTransferDialog from '../components/MobileTransferDialog.vue'
 import { useConfirmDialog } from '../composables/useConfirmDialog'
 
 const { askConfirm } = useConfirmDialog()
@@ -100,16 +112,15 @@ const msg = ref('')
 const assignMap = reactive({})
 const fileInput = ref(null)
 const uploading = ref(false)
+const showMobile = ref(false)
 
 function pickFiles() {
   if (uploading.value) return
   fileInput.value?.click()
 }
 
-async function onFiles(ev) {
-  const files = [...(ev.target.files || [])]
-  ev.target.value = ''
-  if (!files.length) return
+async function uploadFiles(files) {
+  if (!files.length || uploading.value) return
   uploading.value = true
   error.value = ''
   msg.value = ''
@@ -131,6 +142,20 @@ async function onFiles(ev) {
   }
 }
 
+function onFiles(ev) {
+  const files = [...(ev.target.files || [])]
+  ev.target.value = ''
+  uploadFiles(files)
+}
+
+function onPaste(ev) {
+  if (isEditableTarget(ev.target) || hasOpenModal()) return
+  const files = clipboardFiles(ev).map((file, index) => normalizePastedFile(file, index))
+  if (!files.length) return
+  ev.preventDefault()
+  uploadFiles(files)
+}
+
 function openTidy() {
   openBatchUpload({ onDone: load })
 }
@@ -141,8 +166,14 @@ function previewKind(m) {
   return 'image'
 }
 
-async function load() {
-  loading.value = true
+function onMobileReceived({ received }) {
+  msg.value = `手机已传入 ${received} 个文件`
+  load({ silent: true })
+}
+
+async function load(options = {}) {
+  const silent = options?.silent === true
+  if (!silent) loading.value = true
   error.value = ''
   try {
     ;[items.value, entries.value] = await Promise.all([api.listInbox(), api.listEntries()])
@@ -152,7 +183,7 @@ async function load() {
   } catch (e) {
     error.value = e.message
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -199,5 +230,9 @@ async function remove(m) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  window.addEventListener('paste', onPaste)
+  load()
+})
+onUnmounted(() => window.removeEventListener('paste', onPaste))
 </script>
