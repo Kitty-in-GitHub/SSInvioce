@@ -28,6 +28,7 @@ class SlotIn(BaseModel):
     label: str = Field(min_length=1, max_length=40)
     file_kind: str = "image"
     required: bool = True
+    shown_in_list: bool = True
     special: str | None = None
     color: str = "#163a7a"
     keywords: list[str] = Field(default_factory=list)

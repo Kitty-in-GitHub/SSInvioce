@@ -199,10 +199,9 @@
                       >
                         {{ slot.label }}
                       </th>
-                      <th class="col-amount">金额</th>
                       <th class="col-group">分组</th>
-                      <th class="col-actions">操作</th>
-                    </tr>
+                      <th class="col-amount">金额</th>
+                      <th class="col-actions">操作</th>                    </tr>
                   </thead>
                   <tbody>
                     <tr
@@ -224,7 +223,29 @@
                       <td class="col-title">
                         <div class="entry-main">
                           <div class="entry-title-row">
-                            <router-link class="entry-title" :to="`/entries/${e.id}`">{{ e.title }}</router-link>
+                            <input
+                              v-if="editingTitleId === e.id"
+                              class="entry-title-input"
+                              type="text"
+                              :value="e.title"
+                              maxlength="200"
+                              @blur="saveTitle(e, $event)"
+                              @keydown.enter.prevent="saveTitle(e, $event)"
+                              @keydown.escape.prevent="editingTitleId = null"
+                            />
+                            <router-link
+                              v-else
+                              class="entry-title"
+                              :to="`/entries/${e.id}`"
+                              @click.stop
+                            >{{ e.title }}</router-link>
+                            <button
+                              v-if="editingTitleId !== e.id"
+                              class="link-btn title-edit-btn"
+                              type="button"
+                              title="点击修改名称"
+                              @click.stop="startEditTitle(e)"
+                            >✎</button>
                           </div>
                           <div v-if="e.note" class="entry-note">{{ e.note }}</div>
                         </div>
@@ -249,6 +270,12 @@
                           {{ uploadingKey === uploadKey(e.id, slot.id) ? '…' : hasSlot(e, slot.id) ? '✓' : '✗' }}
                         </button>
                       </td>
+                      <td class="col-group">
+                        <select class="entry-group-select" :value="e.group_id ?? ''" @change="onGroupChange(e, $event)">
+                          <option value="">未分组</option>
+                          <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+                        </select>
+                      </td>
                       <td class="col-amount">
                         <div class="amount-cell">
                           <span
@@ -258,10 +285,7 @@
                           >
                             {{ entryAmountChipLabel(e) }}
                           </span>
-                          <div v-if="hasMaterials(e)" class="amount-read" title="请到详情页修改金额">
-                            {{ e.amount != null ? formatAmount(e.amount) : '—' }}
-                          </div>
-                          <div v-else class="amount-edit">
+                          <div class="amount-edit">
                             <span class="amount-prefix" aria-hidden="true">¥</span>
                             <input
                               type="number"
@@ -269,28 +293,14 @@
                               min="0"
                               :value="e.amount ?? ''"
                               placeholder="0.00"
-                              title="可直接修改拟建条目金额"
+                              title="可直接修改金额"
                               @change="onAmountChange(e, $event)"
                             />
                           </div>
                         </div>
                       </td>
-                      <td class="col-group">
-                        <select class="entry-group-select" :value="e.group_id ?? ''" @change="onGroupChange(e, $event)">
-                          <option value="">未分组</option>
-                          <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
-                        </select>
-                      </td>
                       <td class="col-actions">
                         <div class="entry-actions">
-                          <button
-                            class="link-btn link-accent"
-                            type="button"
-                            :disabled="!e.completeness.complete || composingId === e.id"
-                            @click="compose(e)"
-                          >
-                            {{ composingId === e.id ? '拼版中…' : '拼版' }}
-                          </button>
                           <router-link
                             v-if="e.ledger_txn_id"
                             class="link-btn"
@@ -457,11 +467,13 @@ const { askConfirm } = useConfirmDialog()
 const { slots: slotDefs } = useSlots()
 const listSlots = computed(() => {
   if (slotDefs.value.length) {
-    return slotDefs.value.map((s) => ({
-      id: s.id,
-      label: s.label,
-      accept: acceptForKind(s.file_kind),
-    }))
+    return slotDefs.value
+      .filter((s) => s.shown_in_list !== false)
+      .map((s) => ({
+        id: s.id,
+        label: s.label,
+        accept: acceptForKind(s.file_kind),
+      }))
   }
   return [
     { id: 'invoice', label: '发票', accept: acceptForKind('pdf') },
@@ -600,6 +612,7 @@ const error = ref('')
 const hint = ref('')
 const composingId = ref(null)
 const postingId = ref(null)
+const editingTitleId = ref(null)
 const composingGroupId = ref(null)
 const formGroupId = ref(null)
 const selectedIds = ref([])
@@ -1236,11 +1249,6 @@ async function remove(e) {
 }
 
 async function onAmountChange(e, ev) {
-  if (hasMaterials(e)) {
-    ev.target.value = e.amount ?? ''
-    error.value = '非拟建条目请到详情页修改金额'
-    return
-  }
   const raw = ev.target.value
   const amount = raw === '' ? null : Number(raw)
   if (raw !== '' && Number.isNaN(amount)) {
@@ -1250,6 +1258,35 @@ async function onAmountChange(e, ev) {
   }
   try {
     await api.updateEntry(e.id, { amount })
+    await load({ silent: true })
+  } catch (err) {
+    error.value = err.message
+  }
+}
+
+function startEditTitle(e) {
+  editingTitleId.value = e.id
+  // Focus input on next tick
+  nextTick(() => {
+    const el = document.querySelector(`.entry-title-input`)
+    if (el) {
+      el.focus()
+      el.select()
+    }
+  })
+}
+
+async function saveTitle(e, ev) {
+  editingTitleId.value = null
+  const raw = ev.target.value
+  const title = (raw ?? '').trim()
+  if (!title) {
+    ev.target.value = e.title
+    return
+  }
+  if (title === e.title) return
+  try {
+    await api.updateEntry(e.id, { title })
     await load({ silent: true })
   } catch (err) {
     error.value = err.message

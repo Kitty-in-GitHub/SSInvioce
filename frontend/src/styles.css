@@ -1928,13 +1928,22 @@ a.link-btn {
   padding-left: 0.75rem;
   padding-right: 0.25rem;
 }
-.entry-table .col-title { min-width: 10rem; }
+.entry-table .col-title { min-width: 0; }
 .entry-table .col-slot {
-  width: 4.5rem;
+  width: 1%;
   text-align: center;
   white-space: nowrap;
+  padding-left: 0.3rem;
+  padding-right: 0.3rem;
 }
-.entry-table thead .col-slot { text-align: center; }
+.entry-table thead .col-slot {
+  text-align: center;
+  white-space: normal;
+  line-height: 1.15;
+  font-size: 0.72rem;
+  word-break: normal;
+  overflow: hidden;
+}
 .entry-table .col-amount { width: 11rem; white-space: nowrap; }
 .amount-cell {
   display: flex;
@@ -1956,6 +1965,13 @@ a.link-btn {
   white-space: nowrap;
   text-align: right;
   padding-right: 0.85rem;
+  position: sticky;
+  right: 0;
+  background: #fff;
+  z-index: 2;
+}
+.entry-table thead .col-actions {
+  background: #f7f8fb;
 }
 .slot-mark {
   display: inline-flex;
@@ -2028,6 +2044,30 @@ a.link-btn {
   white-space: nowrap;
 }
 .entry-title:hover { color: var(--accent); }
+.entry-title-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+}
+.title-edit-btn {
+  flex: none;
+  font-size: 0.8rem;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.entry-title-row:hover .title-edit-btn {
+  opacity: 0.55;
+}
+.title-edit-btn:hover {
+  opacity: 1 !important;
+}
+
 .entry-note {
   color: var(--muted);
   font-size: 0.8rem;

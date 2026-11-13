@@ -240,12 +240,16 @@ def _normalize_slots(raw: Any, keywords_legacy: Any = None) -> list[dict[str, An
         required = bool(item.get("required", True))
         if special == "invoice":
             required = True
+        shown_in_list = item.get("shown_in_list")
+        if not isinstance(shown_in_list, bool):
+            shown_in_list = True
         out.append(
             {
                 "id": sid,
                 "label": label,
                 "file_kind": file_kind,
                 "required": required,
+                "shown_in_list": shown_in_list,
                 "special": special,
                 "color": color,
                 "keywords": keywords,

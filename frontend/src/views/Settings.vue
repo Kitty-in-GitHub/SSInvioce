@@ -59,6 +59,10 @@
             <input v-model="slot.required" type="checkbox" :disabled="slot.special === 'invoice'" />
             必填（计入齐套）
           </label>
+          <label class="slot-required">
+            <input v-model="slot.shown_in_list" type="checkbox" />
+            条目页显示
+          </label>
           <button v-if="slot.special !== 'invoice'" class="btn btn-sm btn-danger" type="button" @click="removeSlot(idx)">删除</button>
         </div>
         <div class="meta-grid slot-fields">
@@ -140,7 +144,8 @@
 
       <div class="actions settings-actions">
         <button class="btn" type="button" @click="addSlot">添加图片槽位</button>
-        <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">{{ saving ? '保存中…' : '保存' }}</button>
+        <button class="btn" type="button" @click="showOnlyRequired">条目页只显示必填</button>
+        <button class="btn" type="button" @click="showAllSlots">条目页全部显示</button>
         <button class="btn" type="button" :disabled="saving" @click="resetAll">恢复默认槽位与版式</button>
       </div>
     </section>
@@ -235,9 +240,6 @@
               <span class="layout-handle" @pointerdown.stop="startResize($event, rIdx)" />
             </div>
           </div>
-          <div class="actions settings-actions">
-            <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">{{ saving ? '保存中…' : '保存版式' }}</button>
-          </div>
         </div>
       </div>
     </section>
@@ -260,9 +262,6 @@
           <input v-model="kwInputs[slot.id]" type="text" :placeholder="`添加「${slot.label}」关键词`" @keydown.enter.prevent="addKeyword(slot)" />
           <button class="btn btn-sm" type="button" @click="addKeyword(slot)">添加</button>
         </div>
-      </div>
-      <div class="actions settings-actions">
-        <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">{{ saving ? '保存中…' : '保存' }}</button>
       </div>
     </section>
 
@@ -354,9 +353,6 @@
         >
           添加表格模板
         </button>
-        <button class="btn btn-primary" type="button" :disabled="saving" @click="saveAll">
-          {{ saving ? '保存中…' : '保存表格定义' }}
-        </button>
       </div>
     </section>
 
@@ -399,7 +395,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { api } from '../api/client'
 import { loadSlots } from '../composables/useSlots'
 import { useTheme } from '../composables/useTheme'
@@ -646,12 +642,21 @@ function addSlot() {
     label: `自定义${n}`,
     file_kind: 'image',
     required: false,
+    shown_in_list: false,
     special: null,
     color,
     keywords: [],
   })
   activeSlotIdx.value = draftSlots.value.length - 1
   kwInputs[id] = ''
+}
+
+function showOnlyRequired() {
+  for (const s of draftSlots.value) s.shown_in_list = !!s.required
+}
+
+function showAllSlots() {
+  for (const s of draftSlots.value) s.shown_in_list = true
 }
 
 function removeSlot(idx) {
@@ -757,10 +762,65 @@ function onPointerUp() {
   drag.value = null
 }
 
-async function saveAll() {
+// ---------- Auto-save infrastructure ----------
+const AUTO_SAVE_DEBOUNCE_MS = 600
+const autoSaveDirty = ref(false)
+let autoSaveTimer = null
+let savingPromise = null
+
+function markDirty() {
+  // Ignore dirty events while initial load hasn't finished
+  if (loading.value) return
+  autoSaveDirty.value = true
+  if (autoSaveTimer) clearTimeout(autoSaveTimer)
+  autoSaveTimer = setTimeout(saveAllSilent, AUTO_SAVE_DEBOUNCE_MS)
+}
+
+function cancelPendingAutoSave() {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+    autoSaveTimer = null
+  }
+}
+
+async function saveAllSilent() {
+  if (savingPromise) {
+    // Already saving; mark dirty so we re-save at the end
+    autoSaveDirty.value = true
+    return savingPromise
+  }
+  cancelPendingAutoSave()
+  autoSaveDirty.value = false
+  savingPromise = doSaveAll({ silent: true })
+  try {
+    await savingPromise
+  } finally {
+    savingPromise = null
+    // If user made changes while we were saving, flush again
+    if (autoSaveDirty.value) {
+      autoSaveDirty.value = false
+      void doSaveAll({ silent: true })
+    }
+  }
+}
+
+async function saveAllNow() {
+  // Immediate, bypassing debounce. Used by reset, beforeRouteLeave, onUnmounted.
+  cancelPendingAutoSave()
+  autoSaveDirty.value = false
+  if (savingPromise) {
+    await savingPromise
+    autoSaveDirty.value = false
+  }
+  return doSaveAll({ silent: false })
+}
+
+// Public saveAll now wraps doSaveAll so both auto-save and explicit calls share it.
+// We keep the original name for compatibility but it's now just a thin wrapper.
+async function doSaveAll({ silent } = {}) {
   saving.value = true
   error.value = ''
-  msg.value = ''
+  if (!silent) msg.value = ''
   try {
     const payload = {
       slots: draftSlots.value.map(({ _locked, ...s }) => ({
@@ -768,6 +828,7 @@ async function saveAll() {
         label: s.label,
         file_kind: s.file_kind,
         required: !!s.required,
+        shown_in_list: s.shown_in_list !== false,
         special: s.special || null,
         color: s.color,
         keywords: [...(s.keywords || [])],
@@ -779,13 +840,21 @@ async function saveAll() {
     const res = await api.updateSettings(payload)
     cloneSettings(res)
     await loadSlots(true)
-    msg.value = '已保存'
+    if (!silent) msg.value = '已保存'
   } catch (e) {
     error.value = e.message
   } finally {
     saving.value = false
   }
 }
+// Backwards-compat alias; explicit save calls can still use saveAll.
+const saveAll = doSaveAll
+
+// ---------- watch: dirty on any settings change ----------
+watch(draftSlots, () => markDirty(), { deep: true })
+watch(draftLayout, () => markDirty(), { deep: true })
+watch(customColors, () => markDirty(), { deep: true })
+watch(draftForms, () => markDirty(), { deep: true })
 
 async function resetAll() {
   saving.value = true
@@ -884,7 +953,7 @@ function addFormTemplate() {
     tables: schema.tables,
     has_user_docx: false,
   })
-  msg.value = `已添加「${id}」，请保存定义后上传对应 Word 模板`
+  msg.value = `已添加「${id}」，稍后上传对应 Word 模板`
   error.value = ''
 }
 
@@ -892,7 +961,7 @@ function removeFormTemplate(idx) {
   const form = draftForms.value[idx]
   if (!form || isBuiltinForm(form.id)) return
   draftForms.value.splice(idx, 1)
-  msg.value = `已移除「${form.name}」，点击保存后生效`
+  msg.value = `已移除「${form.name}」`
 }
 
 function addFormField(form) {
@@ -1070,5 +1139,19 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onDocPointerDown)
   document.removeEventListener('keydown', onDocKeydown)
+  // Flush any pending auto-save when component unmounts
+  if (autoSaveDirty.value || savingPromise) {
+    cancelPendingAutoSave()
+    void saveAllNow()
+  } else {
+    cancelPendingAutoSave()
+  }
+})
+
+onBeforeRouteLeave(() => {
+  if (autoSaveDirty.value || savingPromise) {
+    return saveAllNow().then(() => true)
+  }
+  return true
 })
 </script>
