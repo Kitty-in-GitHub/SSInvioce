@@ -54,13 +54,21 @@ def ocr_image(path: Path | str) -> str:
         log.exception("OCR failed path=%s", path)
         return ""
     if not result:
+        log.info("OCR empty path=%s", path)
         return ""
     # result rows: [box, text, score]
     parts: list[str] = []
+    detail_rows = []
     for row in result:
         if not row or len(row) < 2:
             continue
+        box = row[0]
         text = str(row[1]).strip()
+        score = row[2] if len(row) >= 3 else None
         if text:
             parts.append(text)
+            detail_rows.append({"text": text, "score": score, "box": box})
+    log.info("OCR path=%s rows=%d text=%s", path, len(parts), "\n".join(parts)[:2000])
+    if detail_rows:
+        log.debug("OCR detail path=%s detail=%s", path, detail_rows)
     return "\n".join(parts)

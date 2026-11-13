@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -10,8 +11,25 @@ from .config import DATA_DIR, ensure_dirs
 LOG_DIR = DATA_DIR / "logs"
 LOGGER_NAME = "star_invoice"
 
+_LEVEL_NAMES = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARN": logging.WARNING,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+}
 
-def setup_logging(level: int = logging.INFO) -> logging.Logger:
+
+def _resolve_level(level_arg: int | str | None) -> int:
+    if level_arg is None:
+        env = os.environ.get("LOG_LEVEL", "").strip().upper()
+        return _LEVEL_NAMES.get(env, logging.INFO)
+    if isinstance(level_arg, str):
+        return _LEVEL_NAMES.get(level_arg.strip().upper(), logging.INFO)
+    return int(level_arg)
+
+
+def setup_logging(level: int | str | None = None) -> logging.Logger:
     ensure_dirs()
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -19,7 +37,8 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
     if logger.handlers:
         return logger
 
-    logger.setLevel(level)
+    resolved_level = _resolve_level(level)
+    logger.setLevel(resolved_level)
     formatter = logging.Formatter(
         fmt="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -32,11 +51,11 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
         encoding="utf-8",
     )
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(level)
+    file_handler.setLevel(resolved_level)
 
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
-    console.setLevel(level)
+    console.setLevel(resolved_level)
 
     logger.addHandler(file_handler)
     logger.addHandler(console)
@@ -45,12 +64,12 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
     # Capture uvicorn logs into the same rotating file once
     for name in ("uvicorn.error", "uvicorn.access"):
         uv = logging.getLogger(name)
-        uv.setLevel(level)
+        uv.setLevel(resolved_level)
         if not any(isinstance(h, RotatingFileHandler) for h in uv.handlers):
             uv.addHandler(file_handler)
         uv.propagate = False
 
-    logger.info("logging initialized -> %s", LOG_DIR / "app.log")
+    logger.info("logging initialized level=%s -> %s", logging.getLevelName(resolved_level), LOG_DIR / "app.log")
     return logger
 
 

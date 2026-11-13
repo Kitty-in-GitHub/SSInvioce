@@ -209,16 +209,19 @@ def _clean_org_name(name: str) -> str | None:
 def _extract_merchant(text: str) -> str | None:
     raw = text or ""
     compact = re.sub(r"\s+", "", raw)
+    log.debug("merchant input=%s", compact[:200])
 
     m = MERCHANT_FULL_RE.search(raw) or MERCHANT_FULL_RE.search(compact)
     if m:
         name = _clean_org_name(m.group(1))
+        log.debug("merchant hit MERCHANT_FULL_RE group1=%s → %s", m.group(1), name)
         if name:
             return name
 
     m = MERCHANT_LABELED_RE.search(raw) or MERCHANT_LABELED_RE.search(compact)
     if m:
         name = _clean_org_name(m.group(1))
+        log.debug("merchant hit MERCHANT_LABELED_RE group1=%s → %s", m.group(1), name)
         if name:
             return name
 
@@ -229,6 +232,7 @@ def _extract_merchant(text: str) -> str | None:
     cleaned = [_clean_org_name(n) for n in names]
     cleaned = [n for n in cleaned if n]
     if cleaned:
+        log.debug("merchant hit INVOICE_NAME_RE names=%s → %s", names, cleaned[-1])
         return cleaned[-1]
 
     # WeChat bill: merchant line sits above signed amount "-30.09"
@@ -241,12 +245,14 @@ def _extract_merchant(text: str) -> str | None:
 def _extract_product_name(text: str) -> str | None:
     raw = text or ""
     compact = re.sub(r"\s+", "", raw)
+    log.debug("product input=%s", compact[:200])
 
     # Tax-class abbreviation: *快递服务*快递费
     m = TAX_PRODUCT_RE.search(raw) or TAX_PRODUCT_RE.search(compact)
     if m:
         product = re.sub(r"\s+", "", m.group(2)).strip(" :：|-_*")
         if product and not any(h in product for h in _HEADER_NOISE):
+            log.debug("product hit TAX_PRODUCT_RE group2=%s → %s", m.group(2), product)
             return product[:40]
 
     # After 项目名称 header, take first plausible Chinese goods phrase
@@ -257,7 +263,9 @@ def _extract_product_name(text: str) -> str | None:
     if m:
         product = m.group(1)
         if product and not any(h in product for h in _HEADER_NOISE):
+            log.debug("product hit 项目名称 rule group1=%s → %s", m.group(1), product)
             return product[:40]
+    log.debug("product no match")
     return None
 
 
@@ -268,17 +276,24 @@ def _format_date(y: str, mo: str | int, d: str | int) -> str:
 def _extract_date(text: str) -> str | None:
     raw = text or ""
     compact = re.sub(r"\s+", "", raw)
+    log.debug("date input=%s", compact[:200])
     m = INVOICE_DATE_RE.search(raw) or INVOICE_DATE_RE.search(compact)
     if m:
-        return _format_date(m.group(1), m.group(2), m.group(3))
+        res = _format_date(m.group(1), m.group(2), m.group(3))
+        log.debug("date hit INVOICE_DATE_RE → %s", res)
+        return res
     m = DATE_RE.search(raw) or DATE_RE.search(compact)
     if not m:
+        log.debug("date no match")
         return None
-    return _format_date(m.group(1), m.group(2), m.group(3))
+    res = _format_date(m.group(1), m.group(2), m.group(3))
+    log.debug("date hit DATE_RE → %s", res)
+    return res
 
 
 def _extract_order_no(text: str) -> str | None:
     m = ORDER_NO_RE.search(text or "")
+    log.debug("order_no input=%s hit=%s", (text or "")[:120], m.group(1) if m else None)
     return m.group(1) if m else None
 
 
@@ -292,24 +307,33 @@ def normalize_invoice_digits(raw: str | None) -> str | None:
 
 def _extract_invoice_number(text: str) -> str | None:
     compact = re.sub(r"\s+", "", text or "")
+    log.debug("inv_number input=%s", compact[:200])
     m = INVOICE_NUMBER_RE.search(text or "") or INVOICE_NUMBER_RE.search(compact)
     if m:
-        return normalize_invoice_digits(m.group(1))
+        res = normalize_invoice_digits(m.group(1))
+        log.debug("inv_number hit INVOICE_NUMBER_RE group1=%s → %s", m.group(1), res)
+        return res
     m = INVOICE_NUMBER_MERGED_RE.search(compact)
     if m:
-        return normalize_invoice_digits(m.group(1))
+        res = normalize_invoice_digits(m.group(1))
+        log.debug("inv_number hit INVOICE_NUMBER_MERGED_RE group1=%s → %s", m.group(1), res)
+        return res
     # 标签存在但值被排版拆开时，退化为唯一的独立 20 位号码
     if "发票号码" in (text or ""):
         hits = set(re.findall(r"(?<!\d)(\d{20})(?!\d)", compact))
+        log.debug("inv_number fallback label-present hits=%s", hits)
         if len(hits) == 1:
             return normalize_invoice_digits(hits.pop())
+    log.debug("inv_number no match")
     return None
 
 
 def _extract_invoice_code(text: str) -> str | None:
     compact = re.sub(r"\s+", "", text or "")
     m = INVOICE_CODE_RE.search(text or "") or INVOICE_CODE_RE.search(compact)
-    return normalize_invoice_digits(m.group(1)) if m else None
+    res = normalize_invoice_digits(m.group(1)) if m else None
+    log.debug("inv_code input=%s hit=%s → %s", compact[:120], m.group(1) if m else None, res)
+    return res
 
 
 def file_sha256(path: Path) -> str | None:
@@ -440,4 +464,8 @@ def extract_features(
         source,
         ocr_used,
     )
+    if text:
+        log.info("features text name=%r source=%s len=%d text=%s", original_name, source, len(text), text[:2000])
+    else:
+        log.info("features text name=%r source=%s empty", original_name, source)
     return feat
