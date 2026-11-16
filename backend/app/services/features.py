@@ -355,11 +355,128 @@ def _amount_float(val: Decimal | None) -> float | None:
     return float(val) if val is not None else None
 
 
-def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, str, bool, list[dict]]:
-    """Returns (text, source, ocr_used, ocr_lines).
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
-    ocr_lines: unified row dicts for BOTH sources — each has text, source,
-    score (None for pdf), box (None for pdf). Frontend renders the same way.
+
+def _merge_vertical_labels(blocks: list[dict]) -> list[dict]:
+    """Merge vertical label fragments (e.g. 销/售/方/信/息 → 销售方信息).
+
+    Finds sequences of blocks that share roughly the same x-range, have
+    small y gaps (6-14 px), and each span only 1-2 CJK chars.
+    """
+    if len(blocks) < 2:
+        return blocks
+
+    blocks_sorted = sorted(blocks, key=lambda b: ((b["y0"] + b["y1"]) / 2))
+    merged: list[dict] = []
+    i = 0
+    while i < len(blocks_sorted):
+        cur = blocks_sorted[i]
+        # 1-2 CJK chars only
+        if len(cur["text"]) > 2 or not _CJK_RE.fullmatch(cur["text"]):
+            merged.append(cur)
+            i += 1
+            continue
+
+        x_center_cur = (cur["x0"] + cur["x1"]) / 2
+        fragments = [cur]
+        j = i + 1
+        while j < len(blocks_sorted):
+            nxt = blocks_sorted[j]
+            # next must also be 1-2 CJK chars
+            if len(nxt["text"]) > 2 or not _CJK_RE.fullmatch(nxt["text"]):
+                break
+            # x must be roughly the same vertical column (±25px)
+            x_center_nxt = (nxt["x0"] + nxt["x1"]) / 2
+            if abs(x_center_cur - x_center_nxt) > 25:
+                break
+            # y gap small enough to be vertical stacking
+            y_gap = nxt["y0"] - fragments[-1]["y1"]
+            if y_gap < -5 or y_gap > 18:
+                break
+            fragments.append(nxt)
+            j += 1
+
+        if len(fragments) >= 3:
+            # merge into one semantic block
+            merged_text = "".join(f["text"] for f in fragments)
+            merged_block = {
+                "text": merged_text,
+                "source": cur.get("source", "pdf"),
+                "score": cur.get("score"),
+                "box": None,
+                "x0": min(f["x0"] for f in fragments),
+                "y0": min(f["y0"] for f in fragments),
+                "x1": max(f["x1"] for f in fragments),
+                "y1": max(f["y1"] for f in fragments),
+            }
+            merged.append(merged_block)
+            i = j
+        else:
+            merged.append(cur)
+            i += 1
+
+    return merged
+
+
+def _blocks_to_text(blocks: list[dict]) -> str:
+    """Reconstruct human-readable text from blocks with bbox coordinates.
+
+    Pipeline:
+      1. Merge vertical labels (销/售/方/信/息 → 销售方信息).
+      2. Sort blocks by y-center, cluster into visual rows via gap threshold.
+      3. Within each row, sort left→right by x0 and join with space.
+    """
+    if not blocks:
+        return ""
+
+    # step 1: filter + merge vertical labels
+    filtered = [
+        b for b in blocks
+        if b.get("text", "").strip() and b.get("y0") is not None
+    ]
+    if not filtered:
+        return ""
+
+    filtered = _merge_vertical_labels(filtered)
+
+    # step 2: sort by y-center
+    filtered.sort(key=lambda b: (b["y0"] + b["y1"]) / 2)
+
+    # step 3: find row-cutting gap threshold
+    y_centers = [(b["y0"] + b["y1"]) / 2 for b in filtered]
+    gaps = [y_centers[i + 1] - y_centers[i] for i in range(len(y_centers) - 1)]
+    avg_gap = sum(gaps) / len(gaps) if gaps else 8.0
+    cut_threshold = avg_gap * 1.8
+
+    # step 4: cluster into rows
+    rows: list[list[dict]] = []
+    current_row: list[dict] = [filtered[0]]
+    for idx in range(len(gaps)):
+        if gaps[idx] > cut_threshold:
+            rows.append(current_row)
+            current_row = [filtered[idx + 1]]
+        else:
+            current_row.append(filtered[idx + 1])
+    rows.append(current_row)
+
+    # step 5: within each row sort left→right and join
+    lines: list[str] = []
+    for row in rows:
+        row_sorted = sorted(row, key=lambda b: b["x0"])
+        line = " ".join(b["text"].strip() for b in row_sorted)
+        if line:
+            lines.append(line)
+
+    return "\n".join(lines)
+
+
+def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, str, bool, list[dict]]:
+    """Returns (text, source, ocr_used, text_blocks).
+
+    text_blocks: unified row dicts for BOTH sources — each has text, source,
+    score (None for pdf), box (None for pdf), and x0/y0/x1/y1 for spatial matching.
+    For PDF we extract per-span bbox; for OCR we convert RapidOCR's 4-corner box.
     """
     suffix = abs_path.suffix.lower()
     if suffix == ".pdf":
@@ -368,20 +485,34 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
 
             doc = fitz.open(abs_path)
             try:
-                pages = []
+                pages_blocks: list[dict] = []
                 for i in range(min(len(doc), 2)):
-                    pages.append(doc[i].get_text() or "")
-                text = "\n".join(pages).strip()
+                    page = doc[i]
+                    d = page.get_text("dict")
+                    for block in d.get("blocks", []):
+                        if "lines" not in block:
+                            continue
+                        for ln in block["lines"]:
+                            for span in ln["spans"]:
+                                t = span["text"].strip()
+                                if not t:
+                                    continue
+                                bb = span["bbox"]  # (x0, y0, x1, y1)
+                                pages_blocks.append({
+                                    "text": t,
+                                    "source": "pdf",
+                                    "score": None,
+                                    "box": None,
+                                    "x0": round(bb[0], 1),
+                                    "y0": round(bb[1], 1),
+                                    "x1": round(bb[2], 1),
+                                    "y1": round(bb[3], 1),
+                                })
+                text = _blocks_to_text(pages_blocks)
             finally:
                 doc.close()
             if text:
-                # 把 PDF 文本层按换行拆成统一行结构
-                rows = []
-                for line in text.splitlines():
-                    line = line.strip()
-                    if line:
-                        rows.append({"text": line, "source": "pdf", "score": None, "box": None})
-                return text, "pdf", False, rows
+                return text, "pdf", False, pages_blocks
         except Exception:
             log.exception("pdf text failed name=%r", original_name)
             return "", "none", False, []
@@ -400,8 +531,7 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
                         tmp_png = f.name
                     try:
                         pix.save(tmp_png)
-                        text, lines = ocr_image_with_lines(tmp_png)
-                        text = text.strip()
+                        _ocr_text, lines = ocr_image_with_lines(tmp_png)
                     finally:
                         try:
                             os.unlink(tmp_png)
@@ -409,10 +539,21 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
                             pass
                 finally:
                     doc.close()
-                if text:
-                    for r in lines:
-                        r["source"] = "ocr"
-                    return text, "ocr", True, lines
+                for r in lines:
+                    r["source"] = "ocr"
+                    box = r.get("box")
+                    if box and len(box) >= 4:
+                        # RapidOCR returns [[x0,y0],[x1,y1],[x2,y2],[x3,y3]]
+                        xs = [p[0] for p in box]
+                        ys = [p[1] for p in box]
+                        r["x0"] = round(min(xs), 1)
+                        r["y0"] = round(min(ys), 1)
+                        r["x1"] = round(max(xs), 1)
+                        r["y1"] = round(max(ys), 1)
+                    else:
+                        r["x0"] = r["y0"] = r["x1"] = r["y1"] = None
+                text = _blocks_to_text(lines)
+                return text, "ocr", True, lines
             except Exception:
                 log.exception("pdf ocr failed name=%r", original_name)
 
@@ -420,15 +561,419 @@ def extract_text_for_file(*, abs_path: Path, original_name: str) -> tuple[str, s
 
     if suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}:
         if ocr_available():
-            text, lines = ocr_image_with_lines(abs_path)
-            text = text.strip()
+            _ocr_text, lines = ocr_image_with_lines(abs_path)
             for r in lines:
                 r["source"] = "ocr"
+                box = r.get("box")
+                if box and len(box) >= 4:
+                    xs = [p[0] for p in box]
+                    ys = [p[1] for p in box]
+                    r["x0"] = round(min(xs), 1)
+                    r["y0"] = round(min(ys), 1)
+                    r["x1"] = round(max(xs), 1)
+                    r["y1"] = round(max(ys), 1)
+                else:
+                    r["x0"] = r["y0"] = r["x1"] = r["y1"] = None
+            text = _blocks_to_text(lines)
             if text:
                 return text, "ocr", True, lines
             return "", "ocr", True, lines
         return "", "none", False, []
     return "", "none", False, []
+
+
+# ── Layout-based field extractor (for templates) ─────────────────────
+# Splits invoice into spatial zones by y-coordinate, then uses label→value
+# row matching within each zone. Independent of text ordering.
+#
+# Template constants below are loaded from settings when available, or
+# fall back to defaults for Chinese electronic invoices (普票 / 专票).
+# Future: user-editable templates in Settings.vue.
+
+ZONE_HEADER = "header"         # y < 60:     title, invoice number, date
+ZONE_BUYER_SELLER = "bs"       # y 60-145:   buyer(left) + seller(right)
+ZONE_TABLE = "table"           # y 145-270:  goods table
+ZONE_TOTALS = "totals"         # y 270-305:  合计, 价税合计(大写/小写)
+ZONE_FOOTER = "footer"         # y > 305:    备注, 开票人
+
+
+def _classify_zones(blocks: list[dict]) -> tuple[dict[str, list[dict]], float]:
+    """Group blocks into 5 spatial zones by y-center.
+
+    Returns (zone_blocks dict, page_width).
+    """
+    zones: dict[str, list[dict]] = {
+        ZONE_HEADER: [], ZONE_BUYER_SELLER: [], ZONE_TABLE: [],
+        ZONE_TOTALS: [], ZONE_FOOTER: [],
+    }
+    page_w = 0.0
+    for b in blocks:
+        if b.get("y0") is None:
+            continue
+        page_w = max(page_w, b.get("x1", 0) or 0)
+        yc = (b["y0"] + b["y1"]) / 2
+        if yc < 60:
+            zones[ZONE_HEADER].append(b)
+        elif yc < 145:
+            zones[ZONE_BUYER_SELLER].append(b)
+        elif yc < 270:
+            zones[ZONE_TABLE].append(b)
+        elif yc < 305:
+            zones[ZONE_TOTALS].append(b)
+        else:
+            zones[ZONE_FOOTER].append(b)
+    return zones, page_w
+
+
+def _split_buyer_seller(blocks: list[dict], page_w: float) -> tuple[list[dict], list[dict]]:
+    """Split the buyer+seller zone into left (buyer) and right (seller) by page mid-x."""
+    mid = page_w / 2 if page_w else 300
+    buyer = [b for b in blocks if (b["x0"] + b["x1"]) / 2 < mid]
+    seller = [b for b in blocks if (b["x0"] + b["x1"]) / 2 >= mid]
+    return buyer, seller
+
+
+def _find_value_after_label(
+    zone_blocks: list[dict],
+    labels: list[str],
+    *,
+    same_row_tol: float = 12.0,
+    digit_only: bool = False,
+    date_match: bool = False,
+) -> str | None:
+    """Find the value block that sits to the right of any of the given labels.
+
+    Search:
+      1. Find all label blocks whose text starts_with one of `labels`
+      2. For each label, find blocks on the same row, to the right
+      3. Apply post-filter: digit_only (8-30 digits), date_match (date regex)
+      4. Return the first match
+    """
+    label_blocks: list[dict] = []
+    for lb in labels:
+        label_blocks.extend(_find_block_by_text(zone_blocks, lb, starts_with=True, exclude_text=None) for _ in [1])
+    # _find_block_by_text returns one; collect fresh per-label
+    label_blocks = []
+    for lb in labels:
+        found = _find_block_by_text(zone_blocks, lb, starts_with=True)
+        if found:
+            label_blocks.append(found)
+
+    if not label_blocks:
+        return None
+
+    for lbl in label_blocks:
+        right_vals = _blocks_right_of(zone_blocks, lbl, skip_self=False)
+        for v in right_vals:
+            t = v["text"].strip()
+            if not t:
+                continue
+            if digit_only:
+                digits = re.sub(r"\D", "", t)
+                if 8 <= len(digits) <= 30:
+                    res = normalize_invoice_digits(digits)
+                    if res:
+                        log.debug("layout label=%r → value=%r → %s", lbl["text"], t, res)
+                        return res
+            elif date_match:
+                m = INVOICE_DATE_RE.search(t) or DATE_RE.search(t)
+                if m:
+                    return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+            else:
+                # free-form value: skip known header-like noise
+                SKIP = {"项目名称", "规格型号", "单位", "数量", "单价", "金额",
+                        "税率/征收率", "税额", "合", "计", "名称", "名称："}
+                if t in SKIP or len(t) < 2:
+                    continue
+                res = _clean_org_name(t)
+                if res:
+                    log.debug("layout label=%r → value=%r → %s", lbl["text"], t, res)
+                    return res
+    return None
+
+
+def _extract_amount_via_layout(totals_blocks: list[dict]) -> float | None:
+    """Find the grand total (价税合计小写) from the totals zone.
+
+    Strategy (in order of preference):
+      1. Find '（小写）' or '小写' label → right neighbor on same row
+      2. Find the LAST '¥' label in the zone (top-to-bottom, right-to-left)
+         → right neighbor on same row
+      3. Find '价税合计' label → nearest numeric value on the same row
+    """
+    if not totals_blocks:
+        return None
+
+    # 1. Prefer 小写 label
+    xiaoxie = _find_block_by_text(totals_blocks, "小写", starts_with=False)
+    if xiaoxie:
+        right_vals = _blocks_right_of(totals_blocks, xiaoxie)
+        for v in right_vals:
+            t = v["text"].strip().lstrip("¥￥")
+            try:
+                val = float(t)
+                log.debug("layout amount via 小写 label → %s", val)
+                return val
+            except ValueError:
+                pass
+
+    # 2. Last ¥ label (bottom-rightmost)
+    yen_labels = [b for b in totals_blocks if b["text"].strip() in ("¥", "￥")]
+    if yen_labels:
+        # bottom-most first; within same y, right-most first
+        yen_labels.sort(key=lambda b: ((b["y0"] + b["y1"]) / 2, b["x0"]), reverse=True)
+        for lbl in yen_labels:
+            right_vals = _blocks_right_of(totals_blocks, lbl)
+            for v in right_vals:
+                t = v["text"].strip()
+                try:
+                    val = float(t)
+                    log.debug("layout amount via last ¥ label → %s", val)
+                    return val
+                except ValueError:
+                    pass
+
+    # 3. 价税合计 label + right numeric
+    jiahui = _find_block_by_text(totals_blocks, "价税合计", starts_with=False)
+    if jiahui:
+        right_vals = _blocks_right_of(totals_blocks, jiahui)
+        for v in right_vals:
+            t = v["text"].strip().lstrip("¥￥")
+            try:
+                val = float(t)
+                log.debug("layout amount via 价税合计 → %s", val)
+                return val
+            except ValueError:
+                pass
+
+    log.debug("layout amount no match in totals zone")
+    return None
+
+
+def _extract_product_via_layout(table_blocks: list[dict]) -> str | None:
+    """Find the first tax-class product name from the goods table.
+
+    Table columns are (roughly): 项目名称 | 规格型号 | 单位 | 数量 | 单价 | 金额 | 税率 | 税额
+    We look for blocks that start with '*' (tax-class marker) — standard
+    electronic invoice product format: *大类*细类商品名.
+    """
+    if not table_blocks:
+        return None
+
+    # Prefer blocks starting with '*' — that's the tax-class line
+    stars = [b for b in table_blocks if b["text"].strip().startswith("*")]
+    stars.sort(key=lambda b: (b["y0"] + b["y1"]) / 2)
+    if stars:
+        val = stars[0]["text"].strip()
+        if len(val) < 40:
+            log.debug("layout product via tax-class marker → %s", val)
+            return val
+
+    # Fallback: first non-header, non-numeric CJK phrase in the table
+    HEADER = {"项目名称", "规格型号", "单  位", "单位", "数  量", "数量",
+              "单  价", "单价", "金  额", "金额", "税率/征收率", "税  额", "税额"}
+    for b in table_blocks:
+        t = b["text"].strip()
+        if not t or t in HEADER:
+            continue
+        # Must contain CJK and be plausible length
+        if 2 <= len(t) <= 40 and _CJK_RE.search(t):
+            # skip pure numbers
+            if re.fullmatch(r"[\d.]+", t):
+                continue
+            log.debug("layout product fallback → %s", t)
+            return t
+    return None
+
+
+def extract_invoice_fields_by_layout(blocks: list[dict]) -> dict:
+    """Main entry: extract invoice fields purely from spatial layout.
+
+    Returns dict with keys: invoice_number, invoice_code, date,
+    buyer_name, buyer_tax_id, seller_name, seller_tax_id,
+    product_name, amount. Missing values are None.
+    """
+    result: dict[str, str | float | None] = {
+        "invoice_number": None, "invoice_code": None, "date": None,
+        "buyer_name": None, "buyer_tax_id": None,
+        "seller_name": None, "seller_tax_id": None,
+        "product_name": None, "amount": None,
+    }
+    if len(blocks) < 5:
+        log.debug("layout extractor: too few blocks (%d), giving up", len(blocks))
+        return result
+
+    zones, page_w = _classify_zones(blocks)
+    buyer, seller = _split_buyer_seller(zones[ZONE_BUYER_SELLER], page_w)
+
+    # --- header zone ---
+    result["invoice_number"] = _find_value_after_label(
+        zones[ZONE_HEADER], ["发票号码"], digit_only=True)
+    result["invoice_code"] = _find_value_after_label(
+        zones[ZONE_HEADER], ["发票代码"], digit_only=True)
+    result["date"] = _find_value_after_label(
+        zones[ZONE_HEADER], ["开票日期"], date_match=True)
+
+    # --- buyer zone (left of mid-x) ---
+    result["buyer_name"] = _find_value_after_label(
+        buyer, ["名称"])
+    result["buyer_tax_id"] = _find_value_after_label(
+        buyer, ["统一社会信用代码", "纳税人识别号", "统一社会信用代码/纳税人识别号"])
+
+    # --- seller zone (right of mid-x) ---
+    result["seller_name"] = _find_value_after_label(
+        seller, ["名称"])
+    result["seller_tax_id"] = _find_value_after_label(
+        seller, ["统一社会信用代码", "纳税人识别号", "统一社会信用代码/纳税人识别号"])
+
+    # --- table zone ---
+    result["product_name"] = _extract_product_via_layout(zones[ZONE_TABLE])
+
+    # --- totals zone ---
+    result["amount"] = _extract_amount_via_layout(zones[ZONE_TOTALS])
+
+    log.debug("layout extractor result: %s", {k: str(v)[:40] for k, v in result.items()})
+    return result
+
+
+# ── Legacy bbox helpers (kept for reference, replaced by layout extractor) ─
+
+
+def _row_of(block: dict) -> float | None:
+    """Return the y-center of a block, or None if no coords."""
+    if block.get("y0") is None or block.get("y1") is None:
+        return None
+    return (block["y0"] + block["y1"]) / 2
+
+
+def _same_row(a: dict, b: dict, tol: float = 12.0) -> bool:
+    """Two blocks are on the same visual row if their y-centers are close."""
+    ra, rb = _row_of(a), _row_of(b)
+    if ra is None or rb is None:
+        return False
+    return abs(ra - rb) <= tol
+
+
+def _blocks_right_of(blocks: list[dict], ref: dict, *,
+                     skip_self: bool = True,
+                     min_text: int = 0) -> list[dict]:
+    """All blocks on the same row as ref, ordered left-to-right.
+
+    We DO NOT strictly require x0 >= ref.x1 — in PDF text layer the value often
+    overlaps the label's right edge (rendering artifact). We just require the
+    block to not be to the LEFT of ref.x0 (so label '名称：' x=317..344 and
+    value '深圳拓竹' x=340..430 both qualify on the same row).
+    """
+    out = []
+    for b in blocks:
+        if skip_self and b is ref:
+            continue
+        if b.get("x0") is None:
+            continue
+        if not _same_row(b, ref):
+            continue
+        # Must be to the right of (or overlapping the right edge of) ref
+        # Allow up to 10px leftward overlap
+        if b["x0"] < ref["x0"] - 2:
+            continue
+        if min_text and len(b.get("text", "").strip()) < min_text:
+            continue
+        out.append(b)
+    out.sort(key=lambda x: x["x0"])
+    return out
+
+
+def _find_block_by_text(blocks: list[dict], needle: str, *,
+                        starts_with: bool = False,
+                        exclude_text: str | None = None) -> dict | None:
+    for b in blocks:
+        t = b.get("text", "")
+        if starts_with:
+            if t.startswith(needle):
+                if exclude_text and exclude_text in t:
+                    continue
+                return b
+        else:
+            if needle in t:
+                if exclude_text and exclude_text in t:
+                    continue
+                return b
+    return None
+
+
+def _extract_merchant_via_bbox(blocks: list[dict]) -> str | None:
+    """Find seller name by spatial layout.
+
+    Strategy: electronic invoice always has two '名称：' labels — buyer (left)
+    and seller (right). The one with larger x is the seller. The value sits
+    on the same row, to the right of the label.
+    """
+    # Find ALL "名称：" label blocks
+    name_labels = [b for b in blocks if b.get("text", "").strip().startswith("名称")
+                   and (b["x0"], b["y0"], b["x1"], b["y1"]) != (None, None, None, None)]
+    if not name_labels:
+        return None
+
+    # Sort by x0 ascending → seller is the rightmost one
+    name_labels.sort(key=lambda b: b["x0"])
+    seller_label = name_labels[-1]
+
+    # Find value blocks on the same row, to the right of seller_label
+    right_vals = _blocks_right_of(blocks, seller_label)
+    if not right_vals:
+        return None
+
+    # Pick the first value (largest text, or just first)
+    # Filter: skip things that look like header labels (项目名称, etc.)
+    SKIP = {"项目名称", "规格型号", "单位", "数量", "单价", "金额",
+            "税率/征收率", "税额", "合", "计"}
+    value_block = None
+    for v in right_vals:
+        t = v["text"].strip()
+        if t in SKIP:
+            continue
+        # Must look like an org name (has suffix or is long enough)
+        if len(t) >= 2:
+            value_block = v
+            break
+    if not value_block:
+        value_block = right_vals[0]
+
+    name = _clean_org_name(value_block["text"].strip())
+    if name:
+        log.debug("bbox merchant label=%r(x=%.1f) → value=%r(x=%.1f)",
+                  seller_label["text"], seller_label["x0"],
+                  value_block["text"], value_block["x0"])
+    return name
+
+
+def _extract_invoice_number_via_bbox(blocks: list[dict]) -> str | None:
+    label = _find_block_by_text(blocks, "发票号码", starts_with=True)
+    if not label:
+        return None
+    # Value on same row, to the right
+    right_vals = _blocks_right_of(blocks, label)
+    for v in right_vals:
+        t = v["text"].strip()
+        digits = re.sub(r"\D", "", t)
+        if 8 <= len(digits) <= 30:
+            res = normalize_invoice_digits(digits)
+            log.debug("bbox inv_number label=%r → value=%r → %s", label["text"], t, res)
+            return res
+    return None
+
+
+def _extract_date_via_bbox(blocks: list[dict]) -> str | None:
+    label = _find_block_by_text(blocks, "开票日期", starts_with=True)
+    if not label:
+        return None
+    right_vals = _blocks_right_of(blocks, label)
+    for v in right_vals:
+        t = v["text"].strip()
+        m = INVOICE_DATE_RE.search(t) or DATE_RE.search(t)
+        if m:
+            return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+    return None
 
 
 def extract_features(
@@ -441,18 +986,51 @@ def extract_features(
     height: int | None = None,
 ) -> FileFeatures:
     path = abs_path or resolve_stored(stored_path)
-    text, source, ocr_used, ocr_lines = extract_text_for_file(abs_path=path, original_name=original_name)
-    from_text = _amount_float(parse_amount_from_pdf_text(text)) if text else None
-    from_name = _amount_float(parse_amount_from_filename(original_name))
-    # Prefer explicit filename money token when present (e.g. 260509_12.00_xxx.pdf)
-    amount = from_name if from_name is not None else from_text
+    text, source, ocr_used, blocks = extract_text_for_file(abs_path=path, original_name=original_name)
 
+    # ── Layout-based extraction (bbox spatial matching) ──────────
+    # First try: extract invoice fields purely from spatial layout.
+    # This handles most Chinese electronic invoices (普票/专票) correctly
+    # regardless of PDF text-layer ordering or OCR noise.
+    layout_fields: dict = {}
+    layout_succeeded = False
+    if blocks and len(blocks) >= 5:
+        try:
+            layout_fields = extract_invoice_fields_by_layout(blocks)
+            # Consider it "succeeded" if at least seller+inv_num populated
+            layout_succeeded = bool(layout_fields.get("seller_name")
+                                    and layout_fields.get("invoice_number"))
+            log.debug("layout extractor: success=%s fields=%s",
+                      layout_succeeded, {k: str(v)[:30] for k, v in layout_fields.items()})
+        except Exception:
+            log.exception("layout extractor failed, falling back to regex")
+            layout_succeeded = False
+
+    # ── Amount chain (layout first, then text/filename regex) ────
+    amount = None
+    if layout_succeeded and layout_fields.get("amount") is not None:
+        amount = _amount_float(layout_fields["amount"])
+        log.debug("amount from layout → %s", amount)
+    else:
+        from_text = _amount_float(parse_amount_from_pdf_text(text)) if text else None
+        from_name = _amount_float(parse_amount_from_filename(original_name))
+        amount = from_name if from_name is not None else from_text
+
+    # ── Suggest type ──────────────────────────────────────────────
     suggested = _pick_type_from_text(text, original_name, width, height)
-    merchant = _extract_merchant(text) if text else None
-    product_name = _extract_product_name(text) if text else None
-    date = _extract_date(text) if text else None
-    invoice_number = _extract_invoice_number(text) if text else None
-    invoice_code = _extract_invoice_code(text) if text else None
+
+    # ── Field consolidation (layout → regex fallback) ────────────
+    merchant = (layout_fields.get("seller_name") if layout_succeeded else None) \
+               or (_extract_merchant(text) if text else None)
+    date = (layout_fields.get("date") if layout_succeeded else None) \
+           or (_extract_date(text) if text else None)
+    invoice_number = (layout_fields.get("invoice_number") if layout_succeeded else None) \
+                     or (_extract_invoice_number(text) if text else None)
+    product_name = (layout_fields.get("product_name") if layout_succeeded else None) \
+                   or (_extract_product_name(text) if text else None)
+    invoice_code = (layout_fields.get("invoice_code") if layout_succeeded else None) \
+                   or (_extract_invoice_code(text) if text else None)
+
     content_sha256 = file_sha256(path) if path.exists() else None
     feat = FileFeatures(
         temp_id=temp_id,
@@ -470,10 +1048,10 @@ def extract_features(
         text_preview=(text or "")[:400],
         ocr_used=ocr_used,
         text_source=source,
-        ocr_lines=ocr_lines,
+        ocr_lines=blocks,
     )
     log.info(
-        "features name=%r type=%s amount=%s product=%s merchant=%s date=%s inv=%s source=%s ocr=%s",
+        "features name=%r type=%s amount=%s product=%s merchant=%s date=%s inv=%s source=%s ocr=%s layout_ok=%s",
         original_name,
         suggested,
         amount,
@@ -483,6 +1061,7 @@ def extract_features(
         invoice_number,
         source,
         ocr_used,
+        layout_succeeded,
     )
     if text:
         log.info("features text name=%r source=%s len=%d text=%s", original_name, source, len(text), text[:2000])
