@@ -46,10 +46,21 @@ DATE_RE = re.compile(
     r"(20\d{2})[年\-/.](\d{1,2})[月\-/.](\d{1,2})",
     re.UNICODE,
 )
+ORDER_NO_LABELS = (
+    "订单编号", "订单号", "支付宝交易号", "微信支付交易单号",
+    "交易号", "流水号", "商户单号", "商家订单号",
+)
 ORDER_NO_RE = re.compile(
-    r"(?:订单号|订单编号|交易号|流水号|商户单号)[:：\s]*([A-Za-z0-9\-_]{6,40})",
+    r"(?:订单编号|订单号|支付宝交易号|微信支付交易单号|交易号|流水号|商户单号|商家订单号)"
+    r"[^\d]{0,40}([A-Za-z0-9\-_]{6,40})",
     re.UNICODE,
 )
+# Order number candidates must NOT look like a masked phone, date, or other noise.
+_ORDER_NO_SKIP = re.compile(r"[*]|^\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}")
+# Pure numeric: >= 12 digits (typical order nos are 16-28 digits)
+# Alphanumeric: >= 8 chars, must have at least 2 letters
+_ORDER_NO_PURE_DIGIT = re.compile(r"^\d{12,}$")
+_ORDER_NO_ALNUM = re.compile(r"^[A-Za-z0-9]{8,}$")
 INVOICE_NUMBER_RE = re.compile(r"发票号码[:：\s]*([0-9０-９]{8,30})", re.UNICODE)
 # 新版电子发票把标签和值分到不同文本块，号码会与开票日期粘在一起：
 # "<20位号码><YYYY>年<MM>月<DD>日"
@@ -296,8 +307,101 @@ def _extract_date(text: str) -> str | None:
 
 def _extract_order_no(text: str) -> str | None:
     m = ORDER_NO_RE.search(text or "")
-    log.debug("order_no input=%s hit=%s", (text or "")[:120], m.group(1) if m else None)
-    return m.group(1) if m else None
+    if m:
+        val = m.group(1)
+        if _is_plausible_order_no(val):
+            log.debug("order_no regex hit=%s", val)
+            return val
+    log.debug("order_no regex no match")
+    return None
+
+
+def _is_plausible_order_no(val: str) -> bool:
+    """Post-filter: reject masked phones, dates, too-short strings."""
+    if not val or len(val) < 6 or len(val) > 40:
+        return False
+    if _ORDER_NO_SKIP.search(val):
+        return False
+    # Pure digit must be long enough (>=12 digits); avoid matching 11-digit phones
+    if _ORDER_NO_PURE_DIGIT.match(val):
+        return True
+    # Alphanumeric: needs at least 1 letter to distinguish from plain numbers
+    if _ORDER_NO_ALNUM.match(val) and re.search(r"[A-Za-z]", val):
+        return True
+    return False
+
+
+def _extract_order_no_via_bbox(blocks: list[dict]) -> str | None:
+    """Find order number by bbox spatial matching.
+
+    Strategy:
+      1. Find label blocks matching ORDER_NO_LABELS (dedupe: prefer longest hit)
+      2. Sort labels by y-center (top of page first — 订单编号 > 支付宝交易号)
+      3. For each label, look in a y-window of ±30px for plausible candidates
+      4. Pick the closest candidate by x-distance to the label
+      5. Return the FIRST label's result (topmost label wins)
+    """
+    if not blocks:
+        return None
+
+    # Step 1: find label blocks, deduplicated — prefer the longest matching label
+    # (e.g. "订单编号" over "订单号", since "订单号" is a substring of "订单编号")
+    label_blocks: list[tuple[float, dict]] = []  # (y_center, block)
+    seen_blocks: set[int] = set()  # block id for dedup
+    for lb in sorted(ORDER_NO_LABELS, key=len, reverse=True):
+        for idx, b in enumerate(blocks):
+            if idx in seen_blocks:
+                continue
+            t = b.get("text", "").strip()
+            if lb in t:
+                yc = (b["y0"] + b["y1"]) / 2
+                label_blocks.append((yc, b))
+                seen_blocks.add(idx)
+                break
+
+    if not label_blocks:
+        log.debug("order_no bbox: no label blocks found")
+        return None
+
+    # Step 2: sort by y-center (top of page first)
+    label_blocks.sort(key=lambda x: x[0])
+
+    # Step 3: try each label in y-order; first one with a candidate wins
+    for _yc, lbl in label_blocks:
+        lbl_y_center = (lbl["y0"] + lbl["y1"]) / 2
+        lbl_x1 = lbl["x1"]
+
+        best_val: str | None = None
+        best_dist = float("inf")
+
+        for b in blocks:
+            if b is lbl:
+                continue
+            if b.get("x0") is None:
+                continue
+            byc = (b["y0"] + b["y1"]) / 2
+            if abs(byc - lbl_y_center) > 30.0:
+                continue
+            t = b.get("text", "").strip()
+            if not t:
+                continue
+            if t in ORDER_NO_LABELS:
+                continue
+
+            if not _is_plausible_order_no(t):
+                continue
+
+            # Prefer values that are clearly to the right and close
+            x_dist = b["x0"] - lbl_x1
+            if -10 <= x_dist <= 250 and x_dist < best_dist:
+                best_dist = x_dist
+                best_val = t
+
+        if best_val:
+            log.info("order_no via bbox label=%r → %s", lbl["text"], best_val)
+            return best_val
+
+    return None
 
 
 def normalize_invoice_digits(raw: str | None) -> str | None:
@@ -1041,7 +1145,10 @@ def extract_features(
         merchant=merchant,
         product_name=product_name,
         date=date,
-        order_no=_extract_order_no(text) if text else None,
+        order_no=(
+            _extract_order_no_via_bbox(blocks)
+            or (_extract_order_no(text) if text else None)
+        ),
         invoice_number=invoice_number,
         invoice_code=invoice_code,
         content_sha256=content_sha256,

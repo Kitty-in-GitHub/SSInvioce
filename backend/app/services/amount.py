@@ -15,14 +15,17 @@ FILENAME_AMOUNT_RE = re.compile(
     re.UNICODE,
 )
 # Prefer explicit "actual paid" labels used on order / payment screenshots.
-ACTUAL_PRICE_RE = re.compile(r"实付价[￥¥]\s*(\d+(?:\.\d{1,2})?)", re.UNICODE)
-ACTUAL_PAY_CHUNK_RE = re.compile(r"实付款(.{0,48})", re.UNICODE)
+ACTUAL_PRICE_RE = re.compile(
+    r"(?:实付价|实付款|实付金额|实际支付|实付)[￥¥]\s*(\d+(?:\.\d{1,2})?)",
+    re.UNICODE,
+)
+ACTUAL_PAY_CHUNK_RE = re.compile(r"(?:实付款|实付金额|实际支付|实付)(.{0,48})", re.UNICODE)
 DISCOUNT_AMOUNT_RE = re.compile(
     r"(?:共减|立减|抵|优惠|减)[￥¥]?\s*\d+(?:\.\d{1,2})?",
     re.UNICODE,
 )
 YUAN_RE = re.compile(
-    r"(?:价税合计|合计金额|应付合计|应付|金额合计)[^\d￥¥]{0,12}[￥¥]?\s*(\d+(?:\.\d{1,2})?)",
+    r"(?:价税合计|合计金额|应付合计|应付|金额合计)[^\d￥¥]{0,40}[￥¥]?\s*(\d+(?:\.\d{1,2})?)",
     re.UNICODE,
 )
 CURRENCY_RE = re.compile(r"[￥¥]\s*(\d+(?:\.\d{1,2})?)")
@@ -55,8 +58,9 @@ def _parse_actual_pay(compact: str) -> Decimal | None:
     if not m:
         return None
     chunk = DISCOUNT_AMOUNT_RE.sub("", m.group(1))
-    amounts = CURRENCY_RE.findall(chunk)
-    for raw in reversed(amounts):
+    # Take the FIRST ￥ amount in the chunk — closest to the "实付款" label.
+    # Do NOT reversed(); the last ￥ could belong to later labels (e.g. 商品总价).
+    for raw in CURRENCY_RE.findall(chunk):
         val = _to_decimal(raw)
         if val is not None:
             return val
