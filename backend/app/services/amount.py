@@ -31,10 +31,18 @@ YUAN_RE = re.compile(
 CURRENCY_RE = re.compile(r"[￥¥]\s*(\d+(?:\.\d{1,2})?)")
 YUAN_UNIT_RE = re.compile(r"(\d+(?:\.\d{1,2})?)\s*元")
 # WeChat / Alipay bill pages: large "-30.09" / "+12.00" without ￥
+# NOTE: do NOT use (?<![0-9.]) lookbehind — real signed amounts like
+# "-21.93" can be preceded by a digit when OCR glues an order number to it
+# (e.g. "...T200P...44-21.93交易成功..."). The \d+\.\d{2} pattern is already
+# specific enough to reject date fragments like "-09-23" or "-09.2312".
 SIGNED_BILL_AMOUNT_RE = re.compile(
-    r"(?<![0-9.])[-－−+](\d+\.\d{2})(?![0-9])",
+    r"[-－−+](\d+\.\d{2})(?![0-9])",
     re.UNICODE,
 )
+# OCR noise filter: reject bare ￥ matches that look like a misread timestamp
+# e.g. "￥6118:23" (OCR turned "18:23" into "6118:23" and added a ￥).
+# Both integer ("6118:23") and decimal ("6118.50:23") forms should be rejected.
+_CURRENCY_NOISE_RE = re.compile(r"[￥¥]\s*\d+(?:\.\d{1,2})?[:：]")
 
 
 def _to_decimal(raw: str) -> Decimal | None:
@@ -131,11 +139,16 @@ def parse_amount_from_pdf_text(text: str) -> Decimal | None:
                 if val is not None:
                     return val
 
-    # Bare ￥ amounts: skip discount-like contexts, prefer later candidates
+    # Bare ￥ amounts: skip discount-like contexts, prefer later candidates,
+    # and skip OCR noise that looks like misread timestamps ("￥6118:23").
     for m in reversed(list(CURRENCY_RE.finditer(compact))):
         start = max(0, m.start() - 8)
         ctx = compact[start : m.start()]
         if any(x in ctx for x in ("共减", "立减", "抵", "减￥", "减¥")):
+            continue
+        # Skip bare ￥ candidates that are followed by a colon (timestamp noise)
+        noise_span = compact[m.start() : m.end() + 3]
+        if _CURRENCY_NOISE_RE.search(noise_span):
             continue
         val = _to_decimal(m.group(1))
         if val is not None:

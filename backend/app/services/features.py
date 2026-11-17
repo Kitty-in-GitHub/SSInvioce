@@ -46,12 +46,26 @@ DATE_RE = re.compile(
     r"(20\d{2})[年\-/.](\d{1,2})[月\-/.](\d{1,2})",
     re.UNICODE,
 )
-ORDER_NO_LABELS = (
-    "订单编号", "订单号", "支付宝交易号", "微信支付交易单号",
-    "交易号", "流水号", "商户单号", "商家订单号",
+# Order number label tiers — HIGHER tier wins when multiple labels exist.
+# TIER 1: merchant-side order id that corresponds to Taobao/JD order no
+#         (e.g. 支付宝账单上的 "商家订单号" = T200P5127xxx → 对应淘宝 5127xxx)
+# TIER 2: the marketplace order's own order_no label
+# TIER 3: payment-platform's own transaction id (fallback only)
+ORDER_NO_LABEL_TIERS: list[list[str]] = [
+    ["商家订单号", "商家单号", "商户订单号"],
+    ["订单编号"],
+    ["订单号", "支付宝交易号", "微信支付交易单号", "交易号", "流水号", "商户单号"],
+]
+ORDER_NO_LABELS = tuple(
+    lb for tier in ORDER_NO_LABEL_TIERS for lb in tier
 )
+# Reverse tier lookup: label → tier priority (0 = highest)
+_ORDER_NO_TIER: dict[str, int] = {
+    lb: i for i, tier in enumerate(ORDER_NO_LABEL_TIERS) for lb in tier
+}
+
 ORDER_NO_RE = re.compile(
-    r"(?:订单编号|订单号|支付宝交易号|微信支付交易单号|交易号|流水号|商户单号|商家订单号)"
+    r"(?:商家订单号|商家单号|商户订单号|订单编号|订单号|支付宝交易号|微信支付交易单号|交易号|流水号|商户单号)"
     r"[^\d]{0,40}([A-Za-z0-9\-_]{6,40})",
     re.UNICODE,
 )
@@ -332,42 +346,45 @@ def _is_plausible_order_no(val: str) -> bool:
 
 
 def _extract_order_no_via_bbox(blocks: list[dict]) -> str | None:
-    """Find order number by bbox spatial matching.
+    """Find order number by bbox spatial matching — with semantic tier priority.
 
-    Strategy:
-      1. Find label blocks matching ORDER_NO_LABELS (dedupe: prefer longest hit)
-      2. Sort labels by y-center (top of page first — 订单编号 > 支付宝交易号)
-      3. For each label, look in a y-window of ±30px for plausible candidates
-      4. Pick the closest candidate by x-distance to the label
-      5. Return the FIRST label's result (topmost label wins)
+    Label tier priority (highest first):
+      TIER 1: 商家订单号/商家单号/商户订单号  ← payment record, maps to Taobao order
+      TIER 2: 订单编号                       ← Taobao order's own label
+      TIER 3: 订单号/支付宝交易号/...       ← payment platform's own transaction id
+
+    Within each tier:
+      1. Find all blocks whose text contains a label (longest-match deduped)
+      2. For each label block, look ±30px y-window for plausible candidates
+      3. Pick closest by x-distance
+      4. First tier that has a match → return it
     """
     if not blocks:
         return None
 
-    # Step 1: find label blocks, deduplicated — prefer the longest matching label
-    # (e.g. "订单编号" over "订单号", since "订单号" is a substring of "订单编号")
-    label_blocks: list[tuple[float, dict]] = []  # (y_center, block)
-    seen_blocks: set[int] = set()  # block id for dedup
-    for lb in sorted(ORDER_NO_LABELS, key=len, reverse=True):
-        for idx, b in enumerate(blocks):
-            if idx in seen_blocks:
-                continue
-            t = b.get("text", "").strip()
-            if lb in t:
-                yc = (b["y0"] + b["y1"]) / 2
-                label_blocks.append((yc, b))
-                seen_blocks.add(idx)
-                break
+    # Build a set of block indices per label (longest-match wins)
+    label_block_map: dict[str, int] = {}  # label → block index
+    for tier in ORDER_NO_LABEL_TIERS:
+        for lb in sorted(tier, key=len, reverse=True):
+            for idx, b in enumerate(blocks):
+                t = b.get("text", "").strip()
+                if lb in t and idx not in label_block_map.values():
+                    label_block_map[lb] = idx
+                    break
 
-    if not label_blocks:
+    # Group found label blocks by tier
+    found_labels = sorted(
+        label_block_map.keys(),
+        key=lambda lb: (_ORDER_NO_TIER.get(lb, 99)),
+    )
+
+    if not found_labels:
         log.debug("order_no bbox: no label blocks found")
         return None
 
-    # Step 2: sort by y-center (top of page first)
-    label_blocks.sort(key=lambda x: x[0])
-
-    # Step 3: try each label in y-order; first one with a candidate wins
-    for _yc, lbl in label_blocks:
+    # Try labels in tier order; first label with a candidate wins
+    for lb in found_labels:
+        lbl = blocks[label_block_map[lb]]
         lbl_y_center = (lbl["y0"] + lbl["y1"]) / 2
         lbl_x1 = lbl["x1"]
 
@@ -385,20 +402,23 @@ def _extract_order_no_via_bbox(blocks: list[dict]) -> str | None:
             t = b.get("text", "").strip()
             if not t:
                 continue
-            if t in ORDER_NO_LABELS:
+            # Skip other label texts themselves
+            if t in ORDER_NO_LABELS or any(ol in t for ol in ORDER_NO_LABELS):
                 continue
 
             if not _is_plausible_order_no(t):
                 continue
 
-            # Prefer values that are clearly to the right and close
             x_dist = b["x0"] - lbl_x1
             if -10 <= x_dist <= 250 and x_dist < best_dist:
                 best_dist = x_dist
                 best_val = t
 
         if best_val:
-            log.info("order_no via bbox label=%r → %s", lbl["text"], best_val)
+            log.info(
+                "order_no via bbox label=%s[tier=%d] → %s",
+                lb, _ORDER_NO_TIER.get(lb, 99), best_val,
+            )
             return best_val
 
     return None
